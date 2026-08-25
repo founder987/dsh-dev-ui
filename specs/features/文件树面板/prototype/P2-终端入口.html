@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2 终端面板 · 交互原型</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="proto-nav">原型导航：<a href="index.html">P1 文件树面板</a>｜<b>P2 终端面板</b></div>
+
+<!-- DevFrame：sidebar 独占全高（grid-row 1/-1）；终端面板与底部栏均 columns 2/-1 -->
+<div class="devframe">
+  <div class="dev-sidebar"><div class="col-title">sidebar · 会话列表（官方）</div>独占从顶到底<br><br>会话 A<br>会话 B</div>
+  <div class="dev-col hide-narrow"><div class="col-title">文件树列</div>工作区：C:\work\dsk-develop-ui<br>📁 src<br>📁 specs<br>📄 package.json</div>
+  <div class="dev-col"><div class="col-title">文件内容列</div>[index.ts] [README.md ●] ｜ 高亮编辑区（占位）</div>
+  <div class="dev-col hide-narrow">
+    <div class="col-title">聊天区（官方会话）</div>
+    对话占位。
+    <div class="demo-flags">
+      <b>演示开关</b>
+      <label><input type="checkbox" id="flagNoWs"> 模拟：未设工作区</label>
+      <label><input type="checkbox" id="flagFail"> 模拟：创建失败</label>
+    </div>
+    <div class="demo-log" id="demoLog"></div>
+  </div>
+
+  <!-- 终端面板（C5 v2）：tab 条（✕ 关闭 / + 新建 / ✕隐藏）+ xterm 终端区 + 顶部行拖拽手柄 -->
+  <div class="dskDevTermPanel" id="termPanel" hidden>
+    <div class="dskDevTermGrip" id="termGrip" title="拖拽调整高度"></div>
+    <div class="dskDevTabBar">
+      <div class="dskDevTabs" id="termTabs"></div>
+      <button type="button" class="dskDevTabMenu" id="termAdd" title="新建终端" aria-label="新建终端">+</button>
+      <button type="button" class="dskDevTabMenu" id="termHide" title="隐藏面板" aria-label="隐藏面板">✕</button>
+    </div>
+    <div class="dskDevTermBody" id="termBody"></div>
+  </div>
+
+  <!-- 底部通用菜单栏（columns 2/-1）：📁 文件列表开关 + 终端面板开关 -->
+  <div class="dskDevBottomBar">
+    <button type="button" class="dskDevBottomBarAction" data-active="true"
+            aria-label="文件列表" aria-pressed="true" title="文件列表（文件树）">📁</button>
+    <button type="button" class="dskDevBottomBarAction" id="termBtn"
+            aria-label="终端" aria-pressed="false" title="终端"
+            style="font-family:ui-monospace,Consolas,monospace">&gt;_</button>
+  </div>
+</div>
+
+<!-- shell 选择弹层（+ 新建，向上弹出）与 tab 右键关闭菜单，均为 dskDevCtxMenu -->
+<div class="dskDevCtxMenu" id="shellPop" hidden role="menu" aria-label="选择终端">
+  <div class="dskDevTermErr" id="shellErr" hidden></div>
+  <div id="shellList"></div>
+</div>
+<div class="dskDevCtxMenu" id="tabMenu" hidden role="menu" aria-label="终端标签菜单"></div>
+
+<script>
+'use strict';
+/* ── 模拟数据 ── */
+const SHELLS = [
+  { id: 'powershell', label: 'PowerShell', available: true },
+  { id: 'pwsh', label: 'PowerShell 7', available: true },
+  { id: 'cmd', label: '命令提示符 (cmd)', available: true },
+  { id: 'wt', label: 'Windows Terminal', available: true },
+  { id: 'bash', label: 'Git Bash', available: false },
+];
+const WORKSPACE = 'C:\\work\\dsk-develop-ui';
+const LS_SHELL = 'dsk-develop-ui.terminalShell';
+const LS_HEIGHT = 'dsk-develop-ui.termHeight';
+const TERM_MIN = 120, TERM_MAX = 480, TERM_DEFAULT = 260;
+
+const $ = (id) => document.getElementById(id);
+/* termStore：镜像 fileStore 多标签模型（termTabs[] + activeTermId） */
+const state = { panelOpen: false, tabs: [], activeId: '', seq: {}, busy: false };
+
+function getWorkspace() { return $('flagNoWs').checked ? '' : WORKSPACE; }
+function getLastShell() { try { return localStorage.getItem(LS_SHELL) || 'powershell'; } catch { return 'powershell'; } }
+function setLastShell(id) { try { localStorage.setItem(LS_SHELL, id); } catch { /* 原型忽略 */ } }
+function log(text) { $('demoLog').textContent = text; }
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+/* ── 面板显隐（0 高保挂载：隐藏不杀会话）── */
+function setPanelOpen(open) {
+  state.panelOpen = open;
+  $('termPanel').hidden = !open;
+  $('termBtn').setAttribute('aria-pressed', String(open));
+  $('termBtn').toggleAttribute('data-active', open);
+  if (open && state.tabs.length === 0) createTerminal(getLastShell()); // T1：首个终端
+}
+$('termBtn').addEventListener('click', () => setPanelOpen(!state.panelOpen));
+$('termHide').addEventListener('click', () => setPanelOpen(false)); // T7：会话保留
+
+/* ── 终端会话（模拟 host PTY create/kill）── */
+function createTerminal(shellId) {
+  const shell = SHELLS.find((s) => s.id === shellId && s.available);
+  if (!shell) return;
+  const cwd = getWorkspace();
+  if (cwd === '') { renderBody(); return; } // T8：空态提示在终端区
+  if (state.busy) return;
+  state.busy = true;
+  log('POST /terminal/create { shell: "' + shell.id + '", cwd: "' + cwd + '" }');
+  setTimeout(() => {
+    state.busy = false;
+    if ($('flagFail').checked) { // T9：失败 → 弹层重开 + 错误行
+      log('← 400 { error: "spawn ' + shell.id + ' ENOENT" }（模拟）');
+      openShellPop('创建失败：spawn ' + shell.id + ' ENOENT（模拟）');
+      return;
+    }
+    state.seq[shell.id] = (state.seq[shell.id] || 0) + 1;
+    const tab = { id: 't' + Date.now() + state.seq[shell.id], shell: shell.id, cwd, title: shell.label.replace(/ \(.+\)/, '') + ' ' + state.seq[shell.id] };
+    state.tabs.push(tab);
+    state.activeId = tab.id;
+    setLastShell(shell.id);
+    log('← 200 { id: "' + tab.id + '" }（模拟）');
+    renderTabs(); renderBody();
+  }, 300);
+}
+
+/* ── tab 关闭（参考文件内容 Tab：右邻居激活，无则左侧；最后关闭 → 面板隐藏）── */
+function closeTab(id) {
+  const idx = state.tabs.findIndex((t) => t.id === id);
+  if (idx === -1) return;
+  log('POST /terminal/kill { id: "' + id + '" }（模拟）');
+  state.tabs.splice(idx, 1);
+  if (state.activeId === id) {
+    const next = state.tabs[idx] || state.tabs[idx - 1];
+    state.activeId = next ? next.id : '';
+  }
+  if (state.tabs.length === 0) { renderTabs(); setPanelOpen(false); return; } // T6
+  renderTabs(); renderBody();
+}
+function closeOthers(anchorId, dir) { // dir: 'left' | 'right' | 'all'
+  const idx = state.tabs.findIndex((t) => t.id === anchorId);
+  if (idx === -1) return;
+  const kill = (t) => log('POST /terminal/kill { id: "' + t.id + '" }（模拟）');
+  if (dir === 'all') { state.tabs.forEach(kill); state.tabs = []; state.activeId = ''; setPanelOpen(false); renderTabs(); return; }
+  const dead = dir === 'left' ? state.tabs.slice(0, idx) : state.tabs.slice(idx + 1);
+  dead.forEach(kill);
+  state.tabs = state.tabs.filter((t) => !dead.includes(t));
+  if (!state.tabs.some((t) => t.id === state.activeId)) state.activeId = anchorId;
+  renderTabs(); renderBody();
+}
+
+/* ── 渲染 ── */
+function renderTabs() {
+  const wrap = $('termTabs');
+  wrap.innerHTML = '';
+  for (const t of state.tabs) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'dskDevTab';
+    el.toggleAttribute('data-active', t.id === state.activeId);
+    el.innerHTML = '<span class="dskDevTabName">' + esc(t.title) + '</span><span class="dskDevTabClose" title="关闭">✕</span>';
+    el.addEventListener('click', (e) => { // T3 切换 / T4 ✕ 关闭
+      if (e.target.classList.contains('dskDevTabClose')) { closeTab(t.id); return; }
+      state.activeId = t.id; renderTabs(); renderBody();
+    });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); openTabMenu(t.id, e.clientX, e.clientY); }); // T5
+    wrap.appendChild(el);
+  }
+}
+function renderBody() {
+  const body = $('termBody');
+  const t = state.tabs.find((x) => x.id === state.activeId);
+  if (!t) {
+    body.innerHTML = getWorkspace() === ''
+      ? '<div class="dskDevTermEmpty">请先在文件树列加载工作区路径</div>'
+      : '';
+    return;
+  }
+  body.innerHTML = '<span class="dskDevTermExited"># 会话 ' + t.id + '（xterm 画布占位）</span>\n\nPS ' + esc(t.cwd) + '> _';
+}
+
+/* ── + 新建：shell 选择弹层（向上弹出，复用 dskDevCtxMenu）── */
+function openShellPop(errText) {
+  const anchor = $('termAdd').getBoundingClientRect();
+  const pop = $('shellPop');
+  $('shellErr').hidden = !errText;
+  $('shellErr').textContent = errText || '';
+  const list = $('shellList');
+  list.innerHTML = '';
+  const noWs = getWorkspace() === '';
+  const last = getLastShell();
+  for (const s of SHELLS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.disabled = noWs || !s.available; // T8/T9
+    item.textContent = (s.id === last ? '✓ ' : '　') + s.label + (s.available ? '' : '（未安装）');
+    if (!item.disabled) item.addEventListener('click', () => { closePops(); createTerminal(s.id); }); // T2
+    list.appendChild(item);
+  }
+  if (noWs && !errText) { $('shellErr').hidden = false; $('shellErr').textContent = '请先在文件树列加载工作区路径'; }
+  pop.hidden = false;
+  pop.style.left = Math.min(anchor.left, window.innerWidth - 300) + 'px';
+  pop.style.bottom = (window.innerHeight - anchor.top + 4) + 'px';
+  pop.style.top = 'auto';
+}
+
+/* ── tab 右键关闭菜单（四动作，以被右键 tab 为锚，对齐 C4）── */
+function openTabMenu(anchorId, x, y) {
+  const menu = $('tabMenu');
+  menu.innerHTML = '';
+  const actions = [
+    ['关闭当前', () => closeTab(anchorId)],
+    ['关闭全部', () => closeOthers(anchorId, 'all')],
+    ['关闭左侧全部', () => closeOthers(anchorId, 'left')],
+    ['关闭右侧全部', () => closeOthers(anchorId, 'right')],
+  ];
+  for (const [label, fn] of actions) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', () => { closePops(); fn(); });
+    menu.appendChild(b);
+  }
+  menu.hidden = false;
+  menu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 140) + 'px';
+  menu.style.bottom = 'auto';
+}
+function closePops() { $('shellPop').hidden = true; $('tabMenu').hidden = true; }
+
+$('termAdd').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('shellPop').hidden ? openShellPop('') : closePops();
+});
+document.addEventListener('click', (e) => {
+  if (!$('shellPop').contains(e.target) && !$('tabMenu').contains(e.target)) closePops();
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePops(); });
+
+/* ── 面板高度拖拽（120–480 钳制 + localStorage 记忆，对齐列宽模式）── */
+(function initHeight() {
+  let h = TERM_DEFAULT;
+  try { h = Math.min(TERM_MAX, Math.max(TERM_MIN, Number(localStorage.getItem(LS_HEIGHT)) || TERM_DEFAULT)); } catch { /* 忽略 */ }
+  $('termPanel').style.setProperty('--term-h', h + 'px');
+  const grip = $('termGrip');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = $('termPanel').getBoundingClientRect().height;
+    const onMove = (ev) => {
+      const nh = Math.min(TERM_MAX, Math.max(TERM_MIN, startH + (startY - ev.clientY)));
+      $('termPanel').style.setProperty('--term-h', nh + 'px');
+    };
+    const onUp = (ev) => {
+      grip.removeEventListener('pointermove', onMove);
+      grip.removeEventListener('pointerup', onUp);
+      try { localStorage.setItem(LS_HEIGHT, String(Math.round($('termPanel').getBoundingClientRect().height))); } catch { /* 忽略 */ }
+    };
+    grip.addEventListener('pointermove', onMove);
+    grip.addEventListener('pointerup', onUp);
+  });
+})();
+</script>
+</body>
+</html>

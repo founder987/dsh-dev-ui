@@ -1,0 +1,90 @@
+{
+  "version": "1.2",
+  "description": "文件树面板功能全部表单（v1.2：终端入口升级为底部多 tab 终端面板，变更 C5 v2）",
+  "forms": [
+    {
+      "formName": "文件树面板-路径输入",
+      "description": "文件树面板的工作区路径输入",
+      "fields": [
+        {
+          "key": "workspacePath",
+          "label": "工作区路径",
+          "type": "text",
+          "required": true,
+          "placeholder": "如 C:\\work\\project",
+          "validation": "非空；host 侧 fs.resolve 校验路径存在",
+          "enterToSubmit": true,
+          "submitButton": "加载"
+        }
+      ]
+    },
+    {
+      "formName": "终端面板-新建终端",
+      "description": "底部终端面板（变更 C5 v2）：底部栏按钮开关面板，+ 新建经 shell 选择弹层",
+      "fields": [
+        {
+          "key": "shell",
+          "label": "终端类型",
+          "type": "enum",
+          "required": true,
+          "options": [
+            { "value": "powershell", "label": "PowerShell", "hint": "5.1" },
+            { "value": "pwsh", "label": "PowerShell 7", "hint": "pwsh" },
+            { "value": "cmd", "label": "命令提示符", "hint": "cmd" },
+            { "value": "wt", "label": "Windows Terminal", "hint": "wt" },
+            { "value": "bash", "label": "Git Bash", "hint": "bash" }
+          ],
+          "validation": "host 侧硬编码白名单校验；不可用项弹层 disabled（opacity .4）+「（未安装）」后缀"
+        },
+        {
+          "key": "terminalCwd",
+          "label": "工作目录",
+          "type": "text",
+          "required": true,
+          "derivedFrom": "workspacePath",
+          "readonly": true,
+          "validation": "host 侧 fs.resolve + stat 必须为已存在目录"
+        },
+        {
+          "key": "lastShell",
+          "label": "上次终端选择",
+          "type": "enum",
+          "required": false,
+          "persist": "localStorage:dsk-develop-ui.terminalShell",
+          "description": "+ 弹层项 ✓ 标记；首个终端默认沿用；创建失败不变更"
+        },
+        {
+          "key": "termTabs",
+          "label": "终端 tab 列表",
+          "type": "array",
+          "required": false,
+          "itemShape": "{ id: string, shell: enum, cwd: string, title: string }",
+          "description": "镜像 fileStore tabs 模型；标题 = shell 名 + 序号（PowerShell 1、cmd 2）"
+        },
+        {
+          "key": "activeTermId",
+          "label": "活动终端 tab",
+          "type": "string",
+          "required": false,
+          "validation": "须在 termTabs 内；'' = 无终端"
+        },
+        {
+          "key": "termPanelOpen",
+          "label": "终端面板开关",
+          "type": "boolean",
+          "required": false,
+          "description": "会话内保持；隐藏 = 0 高保挂载，会话与 tab 全保留"
+        },
+        {
+          "key": "termHeight",
+          "label": "终端面板高度",
+          "type": "number",
+          "required": false,
+          "default": 260,
+          "validation": "120–480 钳制",
+          "persist": "localStorage:dsk-develop-ui.termHeight"
+        }
+      ]
+    }
+  ]
+}

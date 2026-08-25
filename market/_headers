@@ -1,0 +1,7 @@
+# Cloudflare Pages 自定义响应头（仅使用 Cloudflare Pages 托管时需要）
+# 目录 endpoint 必须是无扩展名路径 /v1/plugins，且响应 Content-Type 必须是 JSON，
+# 否则 Host 会拒绝（restricted-http 强制 application/json）。
+# Netlify 请改用 netlify.toml 的 [[headers]]；Vercel 请改用 vercel.json 的 headers。
+
+/v1/plugins
+  Content-Type: application/json

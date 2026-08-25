@@ -1,0 +1,16 @@
+# 依赖与产物
+node_modules/
+lib/
+dist/
+
+# 日志
+*.log
+debug.log
+
+# 工具缓存
+.apicheck/
+.pnpm-store/
+
+# 系统
+.DS_Store
+Thumbs.db

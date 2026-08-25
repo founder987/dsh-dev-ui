@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0.0",
+  "items": [
+    {
+      "id": "dsk-develop-ui",
+      "name": "dsk-develop-ui",
+      "displayName": "DSK Develop UI",
+      "summary": "一体化开发视图：文件树 + 编辑/预览 + agent 对话",
+      "description": "DSH 一体化开发视图插件：文件树面板（懒加载展开、面包屑、路径记忆、隐藏目录过滤）、文件查看（md 源码/渲染预览、代码高亮、图片预览）、编辑保存（未保存标记、Ctrl+S、版本守卫 409）、@文件与片段级引用。",
+      "categories": [
+        "development"
+      ],
+      "keywords": [
+        "dsh",
+        "plugin",
+        "file-tree",
+        "editor",
+        "preview"
+      ],
+      "latestVersion": "0.1.0",
+      "package": {
+        "registry": "npm",
+        "name": "dsk-develop-ui"
+      },
+      "repository": {
+        "url": "https://gitee.com/freefangzheng/dsh-code-ui.git"
+      },
+      "publisher": {
+        "name": "fangzheng",
+        "url": "https://gitee.com/freefangzheng"
+      },
+      "updatedAt": "2026-08-21T00:00:00.000Z"
+    }
+  ],
+  "page": {
+    "total": 1
+  }
+}

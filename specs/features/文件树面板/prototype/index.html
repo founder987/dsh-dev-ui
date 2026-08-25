@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文件树面板 · 交互原型</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="proto-nav">原型导航：<b>P1 文件树面板</b>｜<a href="P2-终端入口.html">P2 终端入口</a></div>
+<!-- DSH 三列框架 -->
+<div class="app">
+  <!-- 侧栏 -->
+  <aside class="sidebar">
+    <button class="icon-btn" title="会话列表">💬</button>
+    <button class="icon-btn" title="工作区">🗂️</button>
+    <div class="spacer"></div>
+    <button class="icon-btn" title="设置">⚙️</button>
+    <button class="icon-btn file-btn" id="btnFile" title="文件树">📁</button>
+  </aside>
+
+  <!-- 中心对话（占位） -->
+  <main class="center">
+    <div class="conv-head">会话 · 开发 dsk-develop-ui</div>
+    <div class="conv-body">
+      <div class="bubble">已加载文件树面板插件。点击左侧 📁 打开文件列表。</div>
+      <div class="bubble user">帮我看一下 src/host/index.ts 的路由注册</div>
+      <div class="bubble">好的，文件树面板里打开该文件即可查看。</div>
+    </div>
+    <div class="composer">
+      <input placeholder="给 agent 发送消息…（原型占位）">
+      <button>发送</button>
+    </div>
+  </main>
+
+  <!-- 右列 details（原型：文件内容显示在此；当前 MVP 在面板内） -->
+  <aside class="details">
+    <div class="conv-head">详情（details 列 · 后续迁入文件内容）</div>
+    <div class="conv-body" style="color:var(--text-dim);font-size:12px">
+      当前 MVP 文件内容显示在文件树面板下半部；后续迭代迁入此列。
+    </div>
+  </aside>
+</div>
+
+<!-- 文件树面板 -->
+<div class="panel closed" id="panel">
+  <div class="panel-head">
+    <input id="pathInput" placeholder="工作区路径，如 C:\work\project" value="C:\work\dsk-develop-ui">
+    <button id="btnLoad">加载</button>
+    <button id="btnClose" title="关闭">✕</button>
+  </div>
+  <div class="panel-path" id="curPath"></div>
+  <div class="tree" id="tree"></div>
+  <div class="error-text" id="error" style="display:none"></div>
+
+  <!-- 文件内容区 -->
+  <div class="content" id="content" style="display:none">
+    <div class="content-head">
+      <span class="fname" id="fname"></span>
+      <span class="dirty-mark" id="dirty" style="display:none">● 未保存</span>
+      <div class="seg" id="mdSeg" style="display:none">
+        <button id="btnSource" class="on">源码</button>
+        <button id="btnPreview">预览</button>
+      </div>
+      <button id="btnSave" disabled>保存</button>
+    </div>
+    <textarea class="editor" id="editor" spellcheck="false"></textarea>
+    <div class="md-preview" id="mdPreview" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ── 模拟数据：示例项目目录树 ── */
+const FS = {
+  'C:/work/dsk-develop-ui': [
+    { name: 'src', isDir: true }, { name: 'specs', isDir: true },
+    { name: 'docs', isDir: true }, { name: 'package.json', isDir: false },
+    { name: 'README.md', isDir: false }, { name: 'build.mjs', isDir: false },
+    { name: 'tsconfig.json', isDir: false },
+  ],
+  'C:/work/dsk-develop-ui/src': [
+    { name: 'host', isDir: true }, { name: 'client', isDir: true }, { name: 'shared', isDir: true },
+  ],
+  'C:/work/dsk-develop-ui/src/host': [
+    { name: 'index.ts', isDir: false }, { name: 'fs-service.ts', isDir: false }, { name: 'markdown.ts', isDir: false },
+  ],
+  'C:/work/dsk-develop-ui/src/client': [
+    { name: 'index.ts', isDir: false },
+    { name: 'filetree', isDir: true },
+  ],
+  'C:/work/dsk-develop-ui/src/client/filetree': [
+    { name: 'FileTreeButton.tsx', isDir: false }, { name: 'FileTreePanel.tsx', isDir: false }, { name: 'store.ts', isDir: false },
+  ],
+  'C:/work/dsk-develop-ui/src/shared': [
+    { name: 'rpc.ts', isDir: false }, { name: 'errors.ts', isDir: false },
+  ],
+  'C:/work/dsk-develop-ui/specs': [
+    { name: '产品概述.md', isDir: false }, { name: '技术栈.md', isDir: false },
+  ],
+  'C:/work/dsk-develop-ui/docs': [
+    { name: 'M0-技术验证.md', isDir: false }, { name: 'M0-真机安装验证.md', isDir: false },
+  ],
+};
+
+const FILES = {
+  'README.md': '# dsk-develop-ui\n\nDeepSeek Harness 一体化开发视图插件：**文件树 + 文件编辑/预览 + agent 对话** 同屏协作。\n\n## 形态\n\n- host 半：文件系统（`ctx.fs`）、md 渲染（markdown-it）、HTTP 路由\n- client 半：文件树面板（sidebar 按钮 + overlay 抽屉）\n\n## 快速开始\n\n```bash\npnpm install\npnpm build\n```\n\n| 能力 | 状态 |\n|------|------|\n| 目录树 | ✅ |\n| md 预览 | ✅ |\n| 编辑保存 | ✅ |\n',
+  'index.ts': 'import type { Context } from \'@deepseek-ai/cordis\';\nimport * as fsOps from \'./fs-service\';\nimport { renderMarkdownToHtml } from \'./markdown\';\n\nconst API_PREFIX = \'/api/dsk-develop-ui\';\n\nexport function apply(ctx: Context): void {\n  const webServer = ctx.webServer;\n  webServer.register({\n    kind: \'exact\',\n    path: `${API_PREFIX}/fs/list-dir`,\n    handler: async (req, res) => {\n      // 列目录\n    },\n  });\n}\n',
+  'package.json': '{\n  "name": "dsk-develop-ui",\n  "version": "0.1.0",\n  "dsh": { "client": { "inject": ["@deepseek-ai/dsh-client-runtime"] } },\n  "dependencies": {\n    "markdown-it": "^14.3.0",\n    "shiki": "^4.4.3"\n  }\n}\n',
+  'build.mjs': 'import { build } from \'esbuild\';\n\n// host 半\nawait build({ entryPoints: [\'src/host/index.ts\'], outfile: \'lib/index.js\' });\n\n// client 半（__ModuleLoader__ lazy-CJS）\nawait build({ entryPoints: [\'src/client/index.ts\'], outfile: \'lib/client.js\', format: \'cjs\' });\n',
+  'tsconfig.json': '{\n  "compilerOptions": { "strict": true, "target": "ES2022" },\n  "include": ["src"]\n}\n',
+};
+
+/* ── 原型状态 ── */
+const $ = (id) => document.getElementById(id);
+const state = {
+  root: '', curPath: '', open: false,
+  filePath: '', content: '', version: 'v1', dirty: false, isMd: false, view: 'source',
+};
+
+function joinPath(dir, name) {
+  return (dir.endsWith('/') || dir.endsWith('\\')) ? dir + name : dir + '/' + name;
+}
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+/* 渲染 markdown（简化版：标题/加粗/表格/代码） */
+function renderMd(md) {
+  let html = esc(md)
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\n\n/g, '<br><br>');
+  return html;
+}
+
+function loadDir(path) {
+  state.curPath = path;
+  $('curPath').textContent = path;
+  const entries = FS[path] || [];
+  if (path && !FS[path]) {
+    showError('路径不存在：' + path);
+    renderTree([]);
+    return;
+  }
+  hideError();
+  renderTree(entries);
+}
+
+function renderTree(entries) {
+  const sorted = [...entries].sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+  const tree = $('tree');
+  tree.innerHTML = '';
+  if (sorted.length === 0) {
+    tree.innerHTML = '<div class="empty-hint">空目录</div>';
+    return;
+  }
+  sorted.forEach((entry) => {
+    const row = document.createElement('div');
+    row.className = 'tree-row';
+    row.style.paddingLeft = '22px';
+    const icon = entry.isDir ? '📁' : '📄';
+    row.innerHTML = `<span class="caret">${entry.isDir ? '▸' : ''}</span><span class="icon">${icon}</span><span class="name">${esc(entry.name)}</span>`;
+    if (entry.isDir) {
+      const full = joinPath(state.curPath, entry.name);
+      row.addEventListener('click', () => toggleDir(row, full, entry.name));
+    } else {
+      const full = joinPath(state.curPath, entry.name);
+      row.addEventListener('click', () => openFile(full));
+    }
+    tree.appendChild(row);
+  });
+}
+
+function toggleDir(row, full, name) {
+  const container = row.nextElementSibling;
+  if (container && container.classList.contains('tree-children')) {
+    container.remove();
+    row.querySelector('.caret').textContent = '▸';
+    return;
+  }
+  row.querySelector('.caret').textContent = '▾';
+  const wrap = document.createElement('div');
+  wrap.className = 'tree-children';
+  const child = FS[full];
+  if (!child) {
+    wrap.innerHTML = '<div class="tree-row" style="opacity:.6">（空）</div>';
+  } else {
+    child.forEach((c) => {
+      const r = document.createElement('div');
+      r.className = 'tree-row';
+      const ic = c.isDir ? '📁' : '📄';
+      r.innerHTML = `<span class="caret">${c.isDir ? '▸' : ''}</span><span class="icon">${ic}</span><span class="name">${esc(c.name)}</span>`;
+      const cFull = joinPath(full, c.name);
+      if (c.isDir) {
+        r.addEventListener('click', (e) => { e.stopPropagation(); toggleDir(r, cFull, c.name); });
+      } else {
+        r.addEventListener('click', (e) => { e.stopPropagation(); openFile(cFull); });
+      }
+      wrap.appendChild(r);
+    });
+  }
+  row.after(wrap);
+}
+
+function openFile(full) {
+  const name = full.split('/').pop();
+  const content = FILES[name] || ('（模拟文件）' + name + '\n\n原型中的占位内容。');
+  state.filePath = full; state.content = content; state.version = 'v1'; state.dirty = false;
+  state.isMd = /\.md$/i.test(name); state.view = 'source';
+  $('content').style.display = 'flex';
+  $('fname').textContent = name;
+  $('dirty').style.display = 'none';
+  $('mdSeg').style.display = state.isMd ? 'flex' : 'none';
+  $('editor').value = content;
+  $('editor').style.display = 'block';
+  $('mdPreview').style.display = 'none';
+  $('btnSource').classList.add('on'); $('btnPreview').classList.remove('on');
+  $('btnSave').disabled = true;
+  hideError();
+}
+
+function onEdit() {
+  state.content = $('editor').value;
+  state.dirty = true;
+  $('dirty').style.display = 'inline';
+  $('btnSave').disabled = false;
+}
+
+function saveFile() {
+  // 模拟保存成功（S7）；可手动触发版本冲突演示：S8
+  state.version = 'v2';
+  state.dirty = false;
+  $('dirty').style.display = 'none';
+  $('btnSave').disabled = true;
+  if (state.isMd) showPreview();
+}
+
+function showPreview() {
+  state.view = 'preview';
+  $('btnPreview').classList.add('on'); $('btnSource').classList.remove('on');
+  $('editor').style.display = 'none';
+  $('mdPreview').style.display = 'block';
+  $('mdPreview').innerHTML = renderMd(state.content);
+}
+function showSource() {
+  state.view = 'source';
+  $('btnSource').classList.add('on'); $('btnPreview').classList.remove('on');
+  $('editor').style.display = 'block';
+  $('mdPreview').style.display = 'none';
+}
+function showError(msg) { $('error').textContent = msg; $('error').style.display = 'block'; }
+function hideError() { $('error').style.display = 'none'; }
+
+/* ── 事件绑定 ── */
+$('btnFile').addEventListener('click', () => {
+  state.open = !state.open;
+  $('panel').classList.toggle('closed', !state.open);
+  $('btnFile').classList.toggle('active', state.open);
+});
+$('btnClose').addEventListener('click', () => {
+  state.open = false;
+  $('panel').classList.add('closed');
+  $('btnFile').classList.remove('active');
+});
+$('btnLoad').addEventListener('click', () => {
+  const p = $('pathInput').value.trim();
+  if (!p) { showError('请输入工作区路径'); return; }
+  state.root = p;
+  loadDir(p);
+});
+$('pathInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnLoad').click(); });
+$('editor').addEventListener('input', onEdit);
+$('btnSave').addEventListener('click', saveFile);
+$('btnSource').addEventListener('click', showSource);
+$('btnPreview').addEventListener('click', showPreview);
+window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (state.dirty) saveFile();
+  }
+});
+
+/* 初始演示：自动展开面板并加载示例路径 */
+$('btnFile').click();
+$('btnLoad').click();
+</script>
+</body>
+</html>
