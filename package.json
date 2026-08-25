@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://gitee.com/freefangzheng/dsh-code-ui.git"
+    "url": "git+https://github.com/founder987/dsh-dev-ui.git"
   },
-  "homepage": "https://gitee.com/freefangzheng/dsh-code-ui",
+  "homepage": "https://github.com/founder987/dsh-dev-ui",
   "bugs": {
-    "url": "https://gitee.com/freefangzheng/dsh-code-ui/issues"
+    "url": "https://github.com/founder987/dsh-dev-ui/issues"
   },
   "type": "module",
   "main": "lib/index.js",
