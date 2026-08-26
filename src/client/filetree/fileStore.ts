@@ -4,12 +4,12 @@
  * 方案 C 布局：树列与内容列分处对话两侧，文件状态从面板组件提升至此共享。
  * 多标签模型（变更 C1）：tabs 有序路径列表 + activePath + 每标签状态 byPath；
  * 支持逐个关闭、全部关闭、关闭左侧/右侧所有。
- * 数据经 fetch 调 host 路由 /api/dsk-develop-ui/*（参照 market 模式）。
+ * 数据经 fetch 调 host 路由 /api/dsh-develop-ui/*（参照 market 模式）。
  */
 
 type Listener = () => void;
 
-const API = '/api/dsk-develop-ui';
+const API = '/api/dsh-develop-ui';
 
 /** 图片扩展名（预览用） */
 const IMAGE_EXT_PATTERN = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;
@@ -87,7 +87,7 @@ let state: FileState = initialState;
 const listeners = new Set<Listener>();
 
 /** 受信任文件夹（localStorage 持久化；信任本身不绕过沙箱，仍需会话权限放开） */
-const TRUSTED_KEY = 'dsk-develop-ui.trustedDirs';
+const TRUSTED_KEY = 'dsh-develop-ui.trustedDirs';
 const RETRY_DELAY_MS = 1500;
 const RETRY_MAX_ROUNDS = 40; // 40 * 1.5s ≈ 60s
 let trustedDirs: string[] = [];

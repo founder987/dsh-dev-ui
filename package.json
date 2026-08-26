@@ -1,6 +1,6 @@
 {
-  "name": "dsk-develop-ui",
-  "version": "0.1.0",
+  "name": "dsh-develop-ui",
+  "version": "0.1.1",
   "description": "DSH 一体化开发视图插件：文件树 + 编辑/预览 + agent 对话（dual-half Cordis plugin）",
   "license": "MIT",
   "publishConfig": {
@@ -34,6 +34,8 @@
   },
   "files": [
     "lib",
+    "!lib/probe",
+    "!lib/**/*.map",
     "cordis.patch.yml",
     "README.md"
   ],

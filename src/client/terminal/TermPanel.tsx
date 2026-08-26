@@ -1,7 +1,10 @@
 /**
- * client 半：终端面板组件（C5 v2）。
+ * client 半：终端面板组件（C5 v2 + C9 工作区隔离）。
  * 布局：DevFrame 底部行（grid-row 2，grid-column 2/-1；sidebar 列独占全高）；
  * 0 高保挂载（隐藏保会话，对齐列最小化语义）；顶部行手柄拖拽调高（120–480 + 记忆）。
+ * C9：store 全量 state 按 props.cwd 投影当前工作区视图（tabs/activeId/creating/
+ * createError）；cwd 变化自动切换展示，其他工作区 PTY 会话与 read 循环全保留；
+ * 目标工作区无会话 → 空态（cwd 有效可 + 新建，不自动创建）。
  * tab 交互完全镜像文件内容 Tab：悬停 ✕ 右邻居激活、右键/⋯菜单四动作（锚点语义，
  * 复用 C4 .dskDevCtxMenu）、最后 tab 关闭面板自动隐藏、无 dirty 确认。
  * xterm 画布每 tab 一个实例（display:none 保活）；输入 onData → /input；
@@ -20,6 +23,7 @@ import {
   createTerm,
   ensureShells,
   getTermState,
+  getTermWorkspace,
   onTermData,
   sendInput,
   sendResize,
@@ -29,10 +33,10 @@ import {
 } from './termStore';
 
 /* xterm 画布必备 CSS（行高测量依赖）；打包为文本内联注入，保持 client 单文件 bundle */
-const XTERM_CSS_TAG_ID = 'dsk-develop-ui/xterm.css';
+const XTERM_CSS_TAG_ID = 'dsh-develop-ui/xterm.css';
 if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${XTERM_CSS_TAG_ID}"]`) === null) {
   const tag = document.createElement('style');
-  tag.dataset.plugin = 'dsk-develop-ui';
+  tag.dataset.plugin = 'dsh-develop-ui';
   tag.dataset.pluginCss = XTERM_CSS_TAG_ID;
   tag.textContent = xtermCss;
   document.head.appendChild(tag);
@@ -223,11 +227,17 @@ function TermHeightHandle(): React.JSX.Element {
   );
 }
 
-/** 终端面板本体（cwd = 当前工作区路径，由 DevFrame 计算传入） */
+/** 终端面板本体（cwd = 当前工作区路径，由 DevFrame 计算传入；C9：按 cwd 投影工作区视图，
+ *  切换工作区只换展示——其他工作区的 PTY 会话与 read 循环全保留） */
 export function TermPanel(props: { cwd?: string }): React.JSX.Element {
   const state = useSyncExternalStore(subscribeTerm, getTermState);
-  const { tabs, activeId, panelOpen, height, shells, lastShell, creating, createError } = state;
+  const { panelOpen, height, shells, lastShell } = state;
   const cwd = props.cwd;
+  const workspace = cwd === undefined || cwd.length === 0 ? undefined : state.workspaces[cwd];
+  const tabs = workspace?.tabs ?? [];
+  const activeId = workspace?.activeId ?? null;
+  const creating = workspace?.creating ?? false;
+  const createError = workspace?.createError ?? null;
 
   // shell 选择弹层（+ 按钮；向上弹出，复用 dskDevCtxMenu fixed 定位）
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -284,7 +294,7 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
     (shellId: string) => {
       if (cwd === undefined || cwd.length === 0) return;
       void createTerm(shellId, cwd).then(() => {
-        if (getTermState().createError === null) setPickerOpen(false);
+        if (getTermWorkspace(cwd).createError === null) setPickerOpen(false);
       });
     },
     [cwd],
@@ -318,7 +328,9 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
                 className="dskDevTab"
                 data-active={active || undefined}
                 title={tab.exited ? `${tab.title}（已退出）` : tab.title}
-                onClick={() => activateTerm(tab.id)}
+                onClick={() => {
+                  if (cwd !== undefined) activateTerm(cwd, tab.id);
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   openCloseMenu(tab.id, e.clientX, e.clientY);
@@ -333,7 +345,7 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
                   title="关闭"
                   onClick={(e) => {
                     e.stopPropagation();
-                    closeTerm(tab.id);
+                    if (cwd !== undefined) closeTerm(cwd, tab.id);
                   }}
                 >
                   ✕
@@ -404,13 +416,13 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
         </div>
       )}
 
-      {/* tab 关闭菜单（锚点语义：右键 = 被点 tab，⋯ = 活动 tab；向上弹出） */}
-      {closeMenu !== null && (
+      {/* tab 关闭菜单（锚点语义：右键 = 被点 tab，⋯ = 活动 tab；向上弹出；仅作用于当前工作区） */}
+      {closeMenu !== null && cwd !== undefined && (
         <div className="dskDevCtxMenu" style={{ left: closeMenu.left, top: 'auto', bottom: closeMenu.bottom }}>
           <button
             type="button"
             onClick={() => {
-              closeTerm(closeMenu.id);
+              closeTerm(cwd, closeMenu.id);
               setCloseMenu(null);
             }}
           >
@@ -419,7 +431,7 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
           <button
             type="button"
             onClick={() => {
-              closeAllTerms();
+              closeAllTerms(cwd);
               setCloseMenu(null);
             }}
           >
@@ -429,7 +441,7 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
             type="button"
             disabled={anchorIndex <= 0}
             onClick={() => {
-              closeTermsLeft(closeMenu.id);
+              closeTermsLeft(cwd, closeMenu.id);
               setCloseMenu(null);
             }}
           >
@@ -439,7 +451,7 @@ export function TermPanel(props: { cwd?: string }): React.JSX.Element {
             type="button"
             disabled={anchorIndex === -1 || anchorIndex === tabs.length - 1}
             onClick={() => {
-              closeTermsRight(closeMenu.id);
+              closeTermsRight(cwd, closeMenu.id);
               setCloseMenu(null);
             }}
           >

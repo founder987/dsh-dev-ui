@@ -19,7 +19,7 @@ const bundled = buildSync({
 });
 const storeCode = bundled.outputFiles[0].text;
 
-const API = '/api/dsk-develop-ui';
+const API = '/api/dsh-develop-ui';
 
 /** 虚拟世界：内存文件系统 + fetch 路由 + localStorage + 沙箱拒绝目录集合。
  *  legacyRuntime=true 模拟旧版运行时（writeText 不识别第 5 参 sandboxPolicy，
@@ -416,7 +416,7 @@ suite.push(['F2 trustDir：持久化信任并进入重试状态', async () => {
   w.denied.add('/x');
   await s.saveFile();
   s.trustDir('/x');
-  eq(w.storage.get('dsk-develop-ui.trustedDirs'), '["/x"]');
+  eq(w.storage.get('dsh-develop-ui.trustedDirs'), '["/x"]');
   const st = s.getFileState();
   eq(st.sandboxPrompt, null, '提示应关闭');
   eq(st.sandboxRetry.dir, '/x');
@@ -441,7 +441,7 @@ suite.push(['F3 信任后自动重试：白名单直写成功（无需 /permissi
 }]);
 
 suite.push(['F3b 已信任目录首次保存：直接携带 sandboxRoot 即成功', async () => {
-  const shared = new Map([['dsk-develop-ui.trustedDirs', '["/x"]']]);
+  const shared = new Map([['dsh-develop-ui.trustedDirs', '["/x"]']]);
   const w = makeWorld(shared); const s = freshStore(w);
   await openText(s, w, '/x/a.txt', 'hello', '1');
   s.setContent('v2');

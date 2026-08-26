@@ -1,6 +1,8 @@
 /**
- * termStore 终端面板集成测试（C5 v2）：tab 模型、关闭策略（右邻居/左右/全部）、
- * 面板显隐联动、高度记忆、shell 探测与标题序号、输出订阅。
+ * termStore 终端面板集成测试（C5 v2 + C9 工作区隔离）：tab 模型、关闭策略
+ * （右邻居/左右/全部）、面板显隐联动、高度记忆、shell 探测与标题序号、输出订阅；
+ * C9：tabs/activeId/creating/createError 按工作区（cwd）分组，panelOpen/height/
+ * lastShell/shells 全局共享；切换工作区不 kill 远端、不停 read 循环。
  * esbuild 内存打包 src/client/terminal/termStore.ts（CJS），注入 fetch /
  * window.localStorage 打桩，逐用例独立实例（模块级单例隔离）。
  *
@@ -20,9 +22,11 @@ const bundled = buildSync({
 });
 const storeCode = bundled.outputFiles[0].text;
 
-const API = '/api/dsk-develop-ui/terminal';
-const HEIGHT_KEY = 'dsk-develop-ui.termHeight';
-const SHELL_KEY = 'dsk-develop-ui.terminalShell';
+const API = '/api/dsh-develop-ui/terminal';
+const HEIGHT_KEY = 'dsh-develop-ui.termHeight';
+const SHELL_KEY = 'dsh-develop-ui.terminalShell';
+const WS_A = 'C:/projA';
+const WS_B = 'C:/projB';
 
 const DEFAULT_SHELLS = [
   { id: 'powershell', title: 'PowerShell', available: true },
@@ -151,12 +155,15 @@ function eq(actual, expected, msg) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const countCalls = (world, route) => world.calls.filter((c) => c.url.includes(route)).length;
 
-/** 建 N 个 cmd 终端，返回 store 与 id 列表（标题 命令提示符 1..N） */
-async function makeTerms(store, n, cwd = 'C:/proj') {
+/** 当前工作区视图（C9：经 store.getTermWorkspace 投影；缺省 WS_A） */
+const ws = (store, cwd = WS_A) => store.getTermWorkspace(cwd);
+
+/** 建 N 个 cmd 终端，返回 id 列表（标题 命令提示符 1..N） */
+async function makeTerms(store, n, cwd = WS_A) {
   const ids = [];
   for (let i = 0; i < n; i += 1) {
     await store.createTerm('cmd', cwd);
-    ids.push(store.getTermState().activeId);
+    ids.push(ws(store, cwd).activeId);
   }
   return ids;
 }
@@ -164,23 +171,25 @@ async function makeTerms(store, n, cwd = 'C:/proj') {
 const suite = [];
 
 /* ── A. 面板显隐与新建 ── */
-suite.push(['A1 初始状态：空 tabs、面板关闭、默认高度 260', async () => {
+suite.push(['A1 初始状态：无工作区条目、面板关闭、默认高度 260', async () => {
   const s = freshStore(makeWorld());
   const st = s.getTermState();
-  eq(st.tabs.length, 0); eq(st.activeId, null); eq(st.panelOpen, false); eq(st.height, 260);
+  eq(Object.keys(st.workspaces).length, 0);
+  eq(ws(s).tabs.length, 0); eq(ws(s).activeId, null);
+  eq(st.panelOpen, false); eq(st.height, 260);
 }]);
 
 suite.push(['A2 首次打开面板自动创建首个终端（默认 cmd，cwd=工作区）', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  s.setPanelOpen(true, 'C:/proj');
+  s.setPanelOpen(true, WS_A);
   await sleep(10);
   const st = s.getTermState();
   eq(st.panelOpen, true);
-  eq(st.tabs.length, 1, '应自动创建首个终端');
-  eq(st.tabs[0].title, '命令提示符 1');
-  eq(st.activeId, st.tabs[0].id);
+  eq(ws(s).tabs.length, 1, '应自动创建首个终端');
+  eq(ws(s).tabs[0].title, '命令提示符 1');
+  eq(ws(s).activeId, ws(s).tabs[0].id);
   const create = w.calls.find((c) => c.url === `${API}/create`);
-  eq(create.body.shell, 'cmd'); eq(create.body.cwd, 'C:/proj');
+  eq(create.body.shell, 'cmd'); eq(create.body.cwd, WS_A);
 }]);
 
 suite.push(['A3 无工作区路径：打开面板但不创建终端', async () => {
@@ -188,47 +197,47 @@ suite.push(['A3 无工作区路径：打开面板但不创建终端', async () =
   s.setPanelOpen(true, undefined);
   await sleep(10);
   const st = s.getTermState();
-  eq(st.panelOpen, true); eq(st.tabs.length, 0, '无 cwd 不应创建');
+  eq(st.panelOpen, true); eq(Object.keys(st.workspaces).length, 0, '无 cwd 不应创建');
   eq(countCalls(w, 'create'), 0);
 }]);
 
 suite.push(['A4 shell 全部不可用：报 createError，不创建', async () => {
   const w = makeWorld({ shells: DEFAULT_SHELLS.map((s) => ({ ...s, available: false })) });
   const s = freshStore(w);
-  s.setPanelOpen(true, 'C:/proj');
+  s.setPanelOpen(true, WS_A);
   await sleep(10);
-  eq(s.getTermState().tabs.length, 0);
-  assert(s.getTermState().createError !== null, '应设置 createError');
+  eq(ws(s).tabs.length, 0);
+  assert(ws(s).createError !== null, '应设置 createError');
 }]);
 
 suite.push(['A5 lastShell 记忆：预置 cmd → 自动创建用 cmd', async () => {
   const storage = new Map([[SHELL_KEY, 'cmd']]);
   const w = makeWorld({ storage }); const s = freshStore(w);
-  s.setPanelOpen(true, 'C:/proj');
+  s.setPanelOpen(true, WS_A);
   await sleep(10);
   const create = w.calls.find((c) => c.url === `${API}/create`);
   eq(create.body.shell, 'cmd');
-  eq(s.getTermState().tabs[0].title, '命令提示符 1');
+  eq(ws(s).tabs[0].title, '命令提示符 1');
 }]);
 
 suite.push(['A6 标题序号：同 shell 递增、跨 shell 独立、创建后记忆 lastShell', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  await s.createTerm('cmd', 'C:/proj');
-  await s.createTerm('powershell', 'C:/proj');
-  const titles = s.getTermState().tabs.map((t) => t.title);
+  await s.createTerm('cmd', WS_A);
+  await s.createTerm('cmd', WS_A);
+  await s.createTerm('powershell', WS_A);
+  const titles = ws(s).tabs.map((t) => t.title);
   eq(titles.join(','), '命令提示符 1,命令提示符 2,PowerShell 1');
-  eq(s.getTermState().lastShell, 'powershell');
+  eq(s.getTermState().lastShell, 'powershell', 'lastShell 全局共享');
   eq(w.storage.get(SHELL_KEY), 'powershell', 'lastShell 应持久化');
 }]);
 
 suite.push(['A7 创建失败：createError 设置、不产生 tab、creating 复位', async () => {
   const w = makeWorld({ failCreate: true }); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  const st = s.getTermState();
-  eq(st.tabs.length, 0);
-  eq(st.creating, false);
-  assert(st.createError !== null && st.createError.includes('not installed'), `createError 应含错误信息，实际 ${st.createError}`);
+  await s.createTerm('cmd', WS_A);
+  const v = ws(s);
+  eq(v.tabs.length, 0);
+  eq(v.creating, false);
+  assert(v.createError !== null && v.createError.includes('not installed'), `createError 应含错误信息，实际 ${v.createError}`);
 }]);
 
 suite.push(['A8 defaultShell 回退链：默认 cmd；cmd 不可用时回退第一个可用项', async () => {
@@ -246,47 +255,64 @@ suite.push(['A8 defaultShell 回退链：默认 cmd；cmd 不可用时回退第�
   eq(s2.defaultShell(), 'powershell', 'cmd 不可用时回退第一个可用项');
 }]);
 
+/* ── A9. C9 工作区隔离：双工作区互不串 ── */
+suite.push(['A9 双工作区互不串：tabs/activeId/creating/createError 各自独立', async () => {
+  const w = makeWorld(); const s = freshStore(w);
+  const [a1, a2] = await makeTerms(s, 2, WS_A);
+  const [b1] = await makeTerms(s, 1, WS_B);
+  eq(ws(s, WS_A).tabs.map((t) => t.id).join(','), `${a1},${a2}`);
+  eq(ws(s, WS_B).tabs.map((t) => t.id).join(','), b1);
+  eq(ws(s, WS_A).activeId, a2, 'A 的 activeId 不受 B 创建影响');
+  eq(ws(s, WS_B).activeId, b1);
+  const creates = w.calls.filter((c) => c.url === `${API}/create`).map((c) => c.body.cwd);
+  eq(creates.join(','), `${WS_A},${WS_A},${WS_B}`, 'create 携带各自 cwd');
+  s.activateTerm(WS_A, a1);
+  eq(ws(s, WS_A).activeId, a1);
+  eq(ws(s, WS_B).activeId, b1, 'A 的激活切换不影响 B');
+}]);
+
 /* ── B. 关闭策略（镜像文件内容 Tab 语义） ── */
 suite.push(['B1 ✕ 关闭活动 tab → 右邻居激活', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const [t1, t2, t3] = await makeTerms(s, 3);
-  s.activateTerm(t2);
-  s.closeTerm(t2);
-  eq(s.getTermState().activeId, t3, '右邻居应激活');
-  eq(s.getTermState().tabs.map((t) => t.id).join(','), `${t1},${t3}`);
+  s.activateTerm(WS_A, t2);
+  s.closeTerm(WS_A, t2);
+  eq(ws(s).activeId, t3, '右邻居应激活');
+  eq(ws(s).tabs.map((t) => t.id).join(','), `${t1},${t3}`);
 }]);
 
 suite.push(['B2 关闭最右活动 tab → 左邻居激活', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const [t1, t2] = await makeTerms(s, 2);
-  s.activateTerm(t2);
-  s.closeTerm(t2);
-  eq(s.getTermState().activeId, t1);
+  s.activateTerm(WS_A, t2);
+  s.closeTerm(WS_A, t2);
+  eq(ws(s).activeId, t1);
 }]);
 
 suite.push(['B3 关闭非活动 tab → activeId 不变', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const [t1, t2] = await makeTerms(s, 2);
-  s.activateTerm(t2);
-  s.closeTerm(t1);
-  eq(s.getTermState().activeId, t2);
-  eq(s.getTermState().tabs.length, 1);
+  s.activateTerm(WS_A, t2);
+  s.closeTerm(WS_A, t1);
+  eq(ws(s).activeId, t2);
+  eq(ws(s).tabs.length, 1);
 }]);
 
-suite.push(['B4 关闭最后一个 tab → 面板自动隐藏', async () => {
+suite.push(['B4 关闭最后一个 tab → 面板自动隐藏 + 工作区条目回收', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  const id = s.getTermState().activeId;
-  s.closeTerm(id);
+  await s.createTerm('cmd', WS_A);
+  const id = ws(s).activeId;
+  s.closeTerm(WS_A, id);
   const st = s.getTermState();
-  eq(st.tabs.length, 0); eq(st.activeId, null); eq(st.panelOpen, false);
+  eq(ws(s).tabs.length, 0); eq(ws(s).activeId, null); eq(st.panelOpen, false);
+  eq(Object.keys(st.workspaces).length, 0, '空工作区条目应回收');
 }]);
 
 suite.push(['B5 全部关闭：kill 全部远端会话 + 面板隐藏', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const ids = await makeTerms(s, 3);
-  s.closeAllTerms();
-  eq(s.getTermState().tabs.length, 0);
+  s.closeAllTerms(WS_A);
+  eq(ws(s).tabs.length, 0);
   eq(s.getTermState().panelOpen, false);
   const kills = w.calls.filter((c) => c.url === `${API}/kill`).map((c) => c.body.id);
   eq(kills.join(','), ids.join(','), '每个会话都应收到 kill');
@@ -295,35 +321,53 @@ suite.push(['B5 全部关闭：kill 全部远端会话 + 面板隐藏', async ()
 suite.push(['B6 关闭左侧/右侧全部（含非活动锚点，对齐文件 Tab H1-H2）', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const [t1, t2, t3, t4] = await makeTerms(s, 4);
-  s.activateTerm(t1);
-  s.closeTermsRight(t2); // 非活动锚点
-  eq(s.getTermState().tabs.map((t) => t.id).join(','), `${t1},${t2}`);
-  eq(s.getTermState().activeId, t1, '锚点左侧的活动 tab 不受影响');
-  s.closeTermsLeft(t2);
-  eq(s.getTermState().tabs.map((t) => t.id).join(','), t2);
-  eq(s.getTermState().activeId, t2, '活动 tab 被关后回退锚点');
+  s.activateTerm(WS_A, t1);
+  s.closeTermsRight(WS_A, t2); // 非活动锚点
+  eq(ws(s).tabs.map((t) => t.id).join(','), `${t1},${t2}`);
+  eq(ws(s).activeId, t1, '锚点左侧的活动 tab 不受影响');
+  s.closeTermsLeft(WS_A, t2);
+  eq(ws(s).tabs.map((t) => t.id).join(','), t2);
+  eq(ws(s).activeId, t2, '活动 tab 被关后回退锚点');
 }]);
 
 suite.push(['B7 closeTerm 调用远端 kill（body id 正确）', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  const id = s.getTermState().activeId;
-  s.closeTerm(id);
+  await s.createTerm('cmd', WS_A);
+  const id = ws(s).activeId;
+  s.closeTerm(WS_A, id);
   await sleep(5);
   const kill = w.calls.find((c) => c.url === `${API}/kill`);
   eq(kill.body.id, id);
 }]);
 
+/* ── B8. C9 工作区隔离：切工作区会话保留 ── */
+suite.push(['B8 切工作区会话保留：B 全关不 kill A，A 的 read 循环照常', async () => {
+  const w = makeWorld(); const s = freshStore(w);
+  const [a1] = await makeTerms(s, 1, WS_A);
+  const received = [];
+  s.onTermData(a1, (d) => received.push(d));
+  const [b1] = await makeTerms(s, 1, WS_B);
+  s.closeAllTerms(WS_B);
+  await sleep(5);
+  eq(ws(s, WS_B).tabs.length, 0, 'B 工作区已清空');
+  eq(ws(s, WS_A).tabs.map((t) => t.id).join(','), a1, 'A 的 tab 原样保留');
+  const kills = w.calls.filter((c) => c.url === `${API}/kill`).map((c) => c.body.id);
+  eq(kills.join(','), b1, '只有 B 的会话被 kill');
+  w.pushOutput(a1, 'C:\\projA> ');
+  await sleep(5);
+  eq(received.join(''), 'C:\\projA> ', 'A 的 read 循环不受 B 关闭影响');
+}]);
+
 /* ── C. 面板联动与高度 ── */
 suite.push(['C1 再开面板：已有 tab 时不重复创建（会话保留）', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
+  await s.createTerm('cmd', WS_A);
   const before = countCalls(w, 'create');
   s.setPanelOpen(false);
-  s.setPanelOpen(true, 'C:/proj');
+  s.setPanelOpen(true, WS_A);
   await sleep(10);
   eq(countCalls(w, 'create'), before, '已有 tab 再开不应重建');
-  eq(s.getTermState().tabs.length, 1);
+  eq(ws(s).tabs.length, 1);
 }]);
 
 suite.push(['C2 setHeight 钳制 120–480 + localStorage 记忆', async () => {
@@ -347,19 +391,41 @@ suite.push(['C3 高度记忆：storage 预置 999 → 初始 480；预置 200 �
 suite.push(['C4 activateTerm 切换活动 tab；未知 id 不变', async () => {
   const w = makeWorld(); const s = freshStore(w);
   const [t1, t2] = await makeTerms(s, 2);
-  s.activateTerm(t1);
-  eq(s.getTermState().activeId, t1);
-  s.activateTerm('nope');
-  eq(s.getTermState().activeId, t1);
-  s.activateTerm(t2);
-  eq(s.getTermState().activeId, t2);
+  s.activateTerm(WS_A, t1);
+  eq(ws(s).activeId, t1);
+  s.activateTerm(WS_A, 'nope');
+  eq(ws(s).activeId, t1);
+  s.activateTerm(WS_A, t2);
+  eq(ws(s).activeId, t2);
+}]);
+
+/* ── C5. C9 工作区隔离：面板开关全局共享 ── */
+suite.push(['C5 面板开关全局共享：A 开 B 也开；按钮开面板按 cwd 补建（仅按钮路径）', async () => {
+  const w = makeWorld(); const s = freshStore(w);
+  s.setPanelOpen(true, WS_A);
+  await sleep(10);
+  eq(ws(s, WS_A).tabs.length, 1, 'A 自动创建首个终端');
+  eq(s.getTermState().panelOpen, true);
+  // 切到 B（组件投影切换，store 无动作）：面板仍开（全局），B 空态不自动创建
+  eq(s.getTermState().panelOpen, true, '面板开合状态跨工作区共享');
+  eq(ws(s, WS_B).tabs.length, 0, 'B 无视图会话');
+  eq(countCalls(w, 'create'), 1, '切工作区不自动创建');
+  // 按钮再点（toggle → 关 → 开，cwd=B）：B 无 tab → 按钮路径补建
+  s.togglePanel(WS_B);
+  eq(s.getTermState().panelOpen, false);
+  s.togglePanel(WS_B);
+  await sleep(10);
+  eq(s.getTermState().panelOpen, true);
+  eq(ws(s, WS_B).tabs.length, 1, '按钮开面板且当前工作区无 tab → 自动创建');
+  eq(ws(s, WS_A).tabs.length, 1, 'A 的会话保留');
+  eq(countCalls(w, 'kill'), 0, '全程无 kill');
 }]);
 
 /* ── D. 输出订阅与退出标记 ── */
 suite.push(['D1 onTermData 接收 host 输出，cursor 推进', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  const id = s.getTermState().activeId;
+  await s.createTerm('cmd', WS_A);
+  const id = ws(s).activeId;
   const received = [];
   const off = s.onTermData(id, (d) => received.push(d));
   await sleep(5); // 等首个 read 挂起
@@ -371,21 +437,21 @@ suite.push(['D1 onTermData 接收 host 输出，cursor 推进', async () => {
   off();
 }]);
 
-suite.push(['D2 远端 exited → tab 标记「已退出」，read 循环终止', async () => {
+suite.push(['D2 远端 exited → tab 标记「已退出」，read 循环终止（跨工作区定位）', async () => {
   const w = makeWorld(); const s = freshStore(w);
-  await s.createTerm('cmd', 'C:/proj');
-  const id = s.getTermState().activeId;
+  await s.createTerm('cmd', WS_B); // 非默认工作区：markExited 须按 id 定位所属 workspace
+  const id = ws(s, WS_B).activeId;
   await sleep(5);
   w.exitSession(id);
   await sleep(5);
-  eq(s.getTermState().tabs[0].exited, true);
+  eq(ws(s, WS_B).tabs[0].exited, true);
   const readsBefore = countCalls(w, 'read?');
   await sleep(10);
   eq(countCalls(w, 'read?'), readsBefore, 'exited 后不应再发 read');
 }]);
 
 /* ── 运行 ── */
-console.log('--- termStore 终端面板测试 ---');
+console.log('--- termStore 终端面板测试（C5 v2 + C9 工作区隔离） ---');
 for (const [name, fn] of suite) await test(name, fn);
 console.log(`\n结果：${passed}/${passed + failed} 通过`);
 if (failed > 0) {

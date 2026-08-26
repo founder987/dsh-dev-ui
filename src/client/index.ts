@@ -1,5 +1,5 @@
 /**
- * dsk-develop-ui client 半入口（__ModuleLoader__ lazy-CJS bundle）。
+ * dsh-develop-ui client 半入口（__ModuleLoader__ lazy-CJS bundle）。
  *
  * 布局提供者架构（方案 C 落地版）：官方 `ui-layout` 条目在 profile 层
  * `cordis.patch.yml` 中被禁用（`- id: ui-layout, disabled: true`），本插件
@@ -15,14 +15,19 @@
  *
  * 另注册：
  *  - conversation.input.left：composer "@文件" 按钮（list 槽，additive）
+ *  - conversation.input.left：C7 ↑↓ 历史回显（list 槽，additive，0 宽锚点组件）
+ *  - C7 R9 当前提问浮层随 DevFrame 聊天列渲染（AskFloat）；数据源 askFeed 绑定
+ *    ctx.sessions（exports.inject 含 'sessions'，服务缺失时降级为空）
  *
- * 数据经 fetch 调 host 路由 /api/dsk-develop-ui/*。
+ * 数据经 fetch 调 host 路由 /api/dsh-develop-ui/*。
  * 变更 C3：文件列表开关按钮不再注册 sidebar.footer.action，改由 DevFrame
  * 底部通用菜单栏直接渲染（见 DevFrame.tsx dskDevBottomBar）。
  */
 import { DevFrame, createDevLayoutStore } from './shell/DevFrame';
 import { ThemePresenter } from './shell/theme';
 import { FileRefButton } from './conversation/FileRefButton';
+import { HistoryRecall } from './conversation/HistoryRecall';
+import { askFeed, type SessionsLike } from './conversation/askFeed';
 
 type ThemeSnapshot = {
   active: {
@@ -44,6 +49,8 @@ type ClientCtx = {
   theme: {
     getTheme: () => ThemeSnapshot;
   };
+  /** 官方 runtime 提供的会话运行时（C7 提问浮层/历史回显数据源；缺失时降级） */
+  sessions?: SessionsLike;
   on: (event: string, handler: (snapshot: ThemeSnapshot) => void) => () => void;
   effect: (disposer: () => void, label?: string) => void;
 };
@@ -76,10 +83,10 @@ class DevLayoutController {
  * ctx.theme / ctx.on 必须先在此声明，否则报 "cannot get property ... without inject"。
  * 注意：`layout` 由本插件提供，不在此注入。
  */
-export const inject = ['slots', 'theme'];
+export const inject = ['slots', 'theme', 'sessions'];
 
 export function apply(ctx: ClientCtx): void {
-  console.log('[dsk-develop-ui] client half loaded (layout provider)');
+  console.log('[dsh-develop-ui] client half loaded (layout provider)');
 
   // 布局提供者装配：ctx.layout 服务 + root 五列框架，随本 fiber 生命周期释放
   //（镜像官方 ui-layout 的 effect 包裹模式）。
@@ -93,7 +100,7 @@ export function apply(ctx: ClientCtx): void {
       ctx.slots.register(
         {
           name: 'root',
-          id: 'dsk-develop-ui.root',
+          id: 'dsh-develop-ui.root',
           children: {
             sidebar: { kind: 'single', scope: 'root' },
             conversation: { kind: 'single', scope: 'session-maybe' },
@@ -115,7 +122,7 @@ export function apply(ctx: ClientCtx): void {
       disposeRegistration();
       disposeService();
     };
-  }, 'dsk-develop-ui: layout service + root registration');
+  }, 'dsh-develop-ui: layout service + root registration');
 
   // 主题呈现（官方 ui-layout 的 ThemePresenter 等价物）
   ctx.effect(() => {
@@ -126,7 +133,7 @@ export function apply(ctx: ClientCtx): void {
       off();
       presenter.dispose();
     };
-  }, 'dsk-develop-ui: theme presenter');
+  }, 'dsh-develop-ui: theme presenter');
 
   // 侧栏底部按钮已随 C3 移除：文件列表开关在 DevFrame 底部通用菜单栏（避免与
   // 插件市场按钮同列争位）；此处仅保留 composer "@文件" 按钮（additive）。
@@ -134,8 +141,19 @@ export function apply(ctx: ClientCtx): void {
   // composer "@文件" 按钮（list 槽：additive，@文件 引用入口）
   ctx.slots.inject('conversation.input.left', () =>
     ctx.slots.register(
-      { name: 'conversation.input.left', id: 'dsk-develop-ui.file-ref' },
+      { name: 'conversation.input.left', id: 'dsh-develop-ui.file-ref' },
       FileRefButton,
+    ),
+  );
+
+  // C7 聊天区增强：提问数据源绑定（R9 浮层 + R10 回显共用管线；服务缺失降级为空）
+  askFeed.bindSessions(ctx.sessions);
+
+  // R10 composer ↑↓ 历史回显（list 槽：additive，null 渲染组件挂 keydown）
+  ctx.slots.inject('conversation.input.left', () =>
+    ctx.slots.register(
+      { name: 'conversation.input.left', id: 'dsh-develop-ui.history-recall' },
+      HistoryRecall,
     ),
   );
 }

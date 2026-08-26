@@ -7,12 +7,12 @@
 <link rel="stylesheet" href="shared.css">
 </head>
 <body>
-<div class="proto-nav">原型导航：<a href="index.html">P1 文件树面板</a>｜<b>P2 终端面板</b></div>
+<div class="proto-nav">原型导航：<a href="index.html">P1 文件树面板</a>｜<b>P2 终端面板</b>｜<a href="P3-聊天区增强.html">P3 聊天区增强</a></div>
 
 <!-- DevFrame：sidebar 独占全高（grid-row 1/-1）；终端面板与底部栏均 columns 2/-1 -->
 <div class="devframe">
   <div class="dev-sidebar"><div class="col-title">sidebar · 会话列表（官方）</div>独占从顶到底<br><br>会话 A<br>会话 B</div>
-  <div class="dev-col hide-narrow"><div class="col-title">文件树列</div>工作区：C:\work\dsk-develop-ui<br>📁 src<br>📁 specs<br>📄 package.json</div>
+  <div class="dev-col hide-narrow"><div class="col-title">文件树列</div>工作区：C:\work\dsh-develop-ui<br>📁 src<br>📁 specs<br>📄 package.json</div>
   <div class="dev-col"><div class="col-title">文件内容列</div>[index.ts] [README.md ●] ｜ 高亮编辑区（占位）</div>
   <div class="dev-col hide-narrow">
     <div class="col-title">聊天区（官方会话）</div>
@@ -63,9 +63,9 @@ const SHELLS = [
   { id: 'wt', label: 'Windows Terminal', available: true },
   { id: 'bash', label: 'Git Bash', available: false },
 ];
-const WORKSPACE = 'C:\\work\\dsk-develop-ui';
-const LS_SHELL = 'dsk-develop-ui.terminalShell';
-const LS_HEIGHT = 'dsk-develop-ui.termHeight';
+const WORKSPACE = 'C:\\work\\dsh-develop-ui';
+const LS_SHELL = 'dsh-develop-ui.terminalShell';
+const LS_HEIGHT = 'dsh-develop-ui.termHeight';
 const TERM_MIN = 120, TERM_MAX = 480, TERM_DEFAULT = 260;
 
 const $ = (id) => document.getElementById(id);

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P3 聊天区增强 · 交互原型</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<div class="proto-nav">原型导航：<a href="index.html">P1 文件树面板</a>｜<a href="P2-终端入口.html">P2 终端面板</a>｜<b>P3 聊天区增强</b></div>
+
+<!-- DevFrame 五列简版：sidebar | 树 | 内容 | 聊天（C7 只涉及聊天列与其内部 composer）-->
+<div class="devframe">
+  <div class="dev-sidebar"><div class="col-title">sidebar · 会话列表（官方）</div>独占从顶到底<br><br>会话 A（当前）<br>会话 B</div>
+  <div class="dev-col hide-narrow"><div class="col-title">文件树列</div>📁 src<br>📁 specs<br>📄 package.json</div>
+  <div class="dev-col hide-narrow"><div class="col-title">文件内容列</div>[index.ts] [README.md] ｜ 编辑区（占位）</div>
+
+  <!-- 聊天列（官方会话 + 插件增强：R9 浮层 absolute 顶部；R10 composer ↑↓ 回显）-->
+  <div class="dev-chat">
+    <div class="conv-head">会话 · 开发 dsh-develop-ui（官方会话，插件只加浮层与 ↑↓ 回显）</div>
+
+    <!-- R9 当前提问浮层：无提问时 hidden；超 2 行默认折叠，「展开/收起」-->
+    <div class="dskDevAskFloat" id="askFloat" hidden>
+      <span class="dskDevAskLabel">最近提问</span>
+      <span class="dskDevAskText clamped" id="askText"></span>
+      <button type="button" class="dskDevAskToggle" id="askToggle" hidden>展开</button>
+    </div>
+
+    <div class="conv-body" id="msgList"></div>
+
+    <div class="dev-composer">
+      <textarea id="composer" spellcheck="false"
+        placeholder="输入消息… Enter 发送，Shift+Enter 换行；↑↓ 回显历史提问"></textarea>
+      <button type="button" id="btnSend">发送</button>
+    </div>
+    <div class="demo-hint">演示：↑ 回显上一条提问（光标需在首行或草稿为空）；↓ 前进，越过最新恢复你未发送的草稿。</div>
+  </div>
+
+  <!-- 底部通用菜单栏（沿用 C5 布局，columns 2/-1）-->
+  <div class="dskDevBottomBar">
+    <button type="button" class="dskDevBottomBarAction" data-active="true"
+            aria-label="文件列表" aria-pressed="true" title="文件列表（文件树）">📁</button>
+    <button type="button" class="dskDevBottomBarAction"
+            aria-label="终端" aria-pressed="false" title="终端"
+            style="font-family:ui-monospace,Consolas,monospace">&gt;_</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ── 模拟数据：当前会话消息流（含一条超长提问演示折叠）── */
+const LONG_Q = '帮我把 src/client/filetree/store.ts 里的标签关闭逻辑重构一下：\n1. 关闭当前 tab 时优先激活右邻居，没有右邻居再激活左侧；\n2. 右键菜单和 ⋯ 菜单的四个动作要以被右键的 tab 为锚，而不是活动 tab；\n3. dirty 的标签关闭前要弹确认（保存并关闭 / 不保存 / 取消），保存失败的要保留；\n4. 全部改完后把 file-store-tabs 的测试用例补齐。';
+const state = {
+  // { role: 'user'|'agent', text }
+  messages: [
+    { role: 'user', text: '帮我看一下 src/host/index.ts 的路由注册' },
+    { role: 'agent', text: '好的，路由统一走 API_PREFIX，已列出 list-dir / read-text / write-text 三条。' },
+    { role: 'user', text: '终端面板的 tab 关闭参考文件内容 Tab 实现' },
+    { role: 'agent', text: '已对齐：✕ 右邻居激活、右键/⋯菜单四动作、最后 tab 关闭面板隐藏。' },
+    { role: 'user', text: LONG_Q },
+    { role: 'agent', text: '收到，我先从 closeTab 的邻居激活策略开始改。' },
+  ],
+  // R10：历史 = 用户提问升序（与 R9 同一数据源）；回显状态机
+  recall: { active: false, index: -1, stash: '' },
+};
+
+const $ = (id) => document.getElementById(id);
+const msgList = $('msgList'), composer = $('composer');
+const askFloat = $('askFloat'), askText = $('askText'), askToggle = $('askToggle');
+
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+/* ── 消息流渲染 ── */
+function renderMessages() {
+  msgList.innerHTML = '';
+  for (const m of state.messages) {
+    const div = document.createElement('div');
+    div.className = 'bubble' + (m.role === 'user' ? ' user' : '');
+    div.textContent = m.text;
+    msgList.appendChild(div);
+  }
+  msgList.scrollTop = msgList.scrollHeight;
+}
+
+/* ── R9 当前提问浮层：最近一条用户提问；超 2 行默认折叠 + 展开/收起 ── */
+function userQuestions() {
+  // 与实现同语义：kind∈{user} 按时间升序，去重连续重复
+  const list = [];
+  for (const m of state.messages) {
+    if (m.role === 'user' && list[list.length - 1] !== m.text) list.push(m.text);
+  }
+  return list;
+}
+
+function renderAskFloat() {
+  const qs = userQuestions();
+  if (qs.length === 0) { askFloat.hidden = true; return; }
+  askFloat.hidden = false;
+  askText.textContent = qs[qs.length - 1];
+  askText.classList.add('clamped'); // 新提问到达 → 复位折叠
+  askToggle.hidden = true;
+  askToggle.textContent = '展开';
+  // 下一帧测量：内容超 2 行才显示「展开」
+  requestAnimationFrame(() => {
+    askToggle.hidden = askText.scrollHeight <= askText.clientHeight + 1;
+  });
+}
+
+askToggle.addEventListener('click', () => {
+  const clamped = askText.classList.toggle('clamped');
+  askToggle.textContent = clamped ? '展开' : '收起';
+});
+
+/* ── R10 ↑↓ 历史回显（状态机：idle ⇄ recalling）── */
+function caretOnFirstLine(ta) {
+  return !ta.value.slice(0, ta.selectionStart).includes('\n');
+}
+
+function recallMove(dir) { // dir: -1 更早 / +1 更新
+  const qs = userQuestions();
+  if (qs.length === 0) return false;
+  const r = state.recall;
+  if (!r.active) {
+    if (dir !== -1) return false; // 未回显时 ↓ 放行
+    r.active = true;
+    r.stash = composer.value;     // 首次回显暂存当前草稿
+    r.index = qs.length - 1;
+  } else {
+    r.index += dir;
+  }
+  if (r.index < 0) r.index = 0;   // 到顶停留
+  if (r.index >= qs.length) {     // 越过最新 → 恢复暂存草稿并退出回显
+    composer.value = r.stash;
+    r.active = false; r.index = -1;
+    return true;
+  }
+  composer.value = qs[r.index];
+  composer.selectionStart = composer.selectionEnd = composer.value.length;
+  return true;
+}
+
+composer.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    const dir = e.key === 'ArrowUp' ? -1 : 1;
+    const mayStart = state.recall.active || composer.value === '' || caretOnFirstLine(composer);
+    if (mayStart && recallMove(dir)) { e.preventDefault(); return; }
+    // 不满足条件 → 放行官方默认行为
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+/* ── 发送：新提问入消息流 + 历史队列，浮层即更新，回显态复位 ── */
+function send() {
+  const text = composer.value.trim();
+  if (!text) return;
+  state.messages.push({ role: 'user', text });
+  state.messages.push({ role: 'agent', text: '（模拟回复）收到：' + text.slice(0, 24) + (text.length > 24 ? '…' : '') });
+  composer.value = '';
+  state.recall = { active: false, index: -1, stash: '' };
+  renderMessages();
+  renderAskFloat();
+}
+
+$('btnSend').addEventListener('click', send);
+
+/* 初始渲染 */
+renderMessages();
+renderAskFloat();
+composer.focus();
+</script>
+</body>
+</html>

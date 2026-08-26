@@ -50,7 +50,7 @@
           "label": "上次终端选择",
           "type": "enum",
           "required": false,
-          "persist": "localStorage:dsk-develop-ui.terminalShell",
+          "persist": "localStorage:dsh-develop-ui.terminalShell",
           "description": "+ 弹层项 ✓ 标记；首个终端默认沿用；创建失败不变更"
         },
         {
@@ -82,7 +82,7 @@
           "required": false,
           "default": 260,
           "validation": "120–480 钳制",
-          "persist": "localStorage:dsk-develop-ui.termHeight"
+          "persist": "localStorage:dsh-develop-ui.termHeight"
         }
       ]
     }

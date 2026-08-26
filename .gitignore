@@ -10,6 +10,7 @@ debug.log
 # 工具缓存
 .apicheck/
 .pnpm-store/
+.probe/
 
 # 系统
 .DS_Store

@@ -1,6 +1,6 @@
 # DSH 插件市场 · 标准目录来源（路径 A）
 
-本目录是 dsk-develop-ui 的**标准目录来源**（DSH Community Market catalog source v1）。
+本目录是 dsh-develop-ui 的**标准目录来源**（DSH Community Market catalog source v1）。
 
 ## 文件说明
 
@@ -15,6 +15,9 @@
 1. `catalog-source.json` 中 `transport.endpoint` 的 `https://YOUR-HOST/v1/plugins`
    —— 替换成你的真实域名，**必须与 manifest 自身 URL 同源（同一 HTTPS origin、443 端口）**。
 2. `v1/plugins` 中 `latestVersion` 必须与 npm 上实际发布的精确版本一致（每次发新版后同步更新）。
+
+> 改名说明（2026-08-26）：包名 `dsk-develop-ui` → `dsh-develop-ui`（与 DSH 生态命名对齐）。
+> npm 上 `dsk-develop-ui@0.1.0` 为旧名遗留，发布后执行 `npm deprecate` 引导迁移（见下）。
 
 ## 托管步骤（任选其一）
 
@@ -54,7 +57,7 @@
 
 1. DSH Desktop → 设置 → 插件 → **插件市场** → **来源**；
 2. **添加来源**，填 `catalog-source.json` 的 URL（manifest URL）；
-3. 选中该来源 → **发现 / 可安装** 中即可看到并安装 dsk-develop-ui。
+3. 选中该来源 → **发现 / 可安装** 中即可看到并安装 dsh-develop-ui。
 
 ## 发布前自检（npm 包侧，Host 安装时权威复核）
 

@@ -208,6 +208,40 @@ input:focus { border-color: var(--accent); }
 .demo-flags label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .demo-log { margin-top: 8px; font-size: 11px; color: var(--text-dim); font-family: ui-monospace, Consolas, monospace; white-space: pre-wrap; }
 
+/* ── P3 聊天区增强原型（变更 C7：R9 当前提问浮层 + R10 ↑↓ 历史回显）── */
+/* 聊天列 = 相对定位容器，浮层 absolute 顶部（原型命名，实现对齐 dskDev* 模式）*/
+.dev-chat { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 0; background: var(--bg); }
+.dev-chat .conv-body { padding-top: 14px; }
+.dskDevAskFloat {
+  position: absolute; top: 8px; left: 8px; right: 8px; z-index: 10;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  padding: 6px 10px; font-size: 12px; line-height: 1.6;
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.dskDevAskFloat[hidden] { display: none; }
+.dskDevAskLabel { flex: none; color: var(--text-dim); font-size: 11px; padding-top: 1px; }
+.dskDevAskText { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.dskDevAskText.clamped {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.dskDevAskToggle {
+  flex: none; border: none; background: transparent; color: var(--accent);
+  font-size: 11px; padding: 1px 2px; cursor: pointer;
+}
+.dskDevAskToggle:hover { text-decoration: underline; }
+
+/* composer 多行输入（官方 composer 占位：Enter 发送 / Shift+Enter 换行）*/
+.dev-composer { border-top: 1px solid var(--border); padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
+.dev-composer textarea {
+  flex: 1; min-width: 0; resize: none; height: 54px;
+  font: inherit; color: inherit; background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; outline: none;
+}
+.dev-composer textarea:focus { border-color: var(--accent); }
+.demo-hint { font-size: 11px; color: var(--text-dim); padding: 4px 14px 8px; }
+
 /* ── 响应式：窄窗口（<768px）── */
 @media (max-width: 768px) {
   .app { grid-template-columns: 56px 1fr; }
@@ -218,4 +252,7 @@ input:focus { border-color: var(--accent); }
   .devframe { grid-template-columns: minmax(0,1fr); }
   .dev-col.hide-narrow, .dev-sidebar { display: none; }
   .dskDevCtxMenu { width: min(280px, 92vw); }
+  /* P3：聊天列独占整行，浮层随列宽自适应 */
+  .dev-chat { grid-column: 1 / -1; }
+  .dskDevAskFloat { left: 6px; right: 6px; }
 }

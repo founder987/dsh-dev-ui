@@ -3,9 +3,10 @@
  * `window.__ModuleLoader__.load({ id, factory })` lazy-CJS 模块格式，
  * 且 factory 返回的 module.exports 带可调用的 apply（注入 slots stub）。
  *
- * 布局提供者架构（方案 C）：apply 注册 2 个槽位 —— root（DevFrame 五列框架，
- * 官方 ui-layout 禁用后由本插件接替）与 conversation.input.left（@文件 按钮）；
- * 并提供 ctx.layout 服务（reflect.provide）+ ThemePresenter（DOM stub）。
+ * 布局提供者架构（方案 C）：apply 注册 3 个槽位 —— root（DevFrame 五列框架，
+ * 官方 ui-layout 禁用后由本插件接替）与 conversation.input.left ×2（@文件 按钮 +
+ * C7 ↑↓ 历史回显 null 组件）；并提供 ctx.layout 服务（reflect.provide）+
+ * ThemePresenter（DOM stub）。C7：exports.inject 增 'sessions'（提问数据源）。
  *
  * 运行：node tests/integration/client-bundle-format.test.mjs
  */
@@ -110,11 +111,11 @@ const ctxStub = {
 };
 mod.apply(ctxStub);
 
-if (registered.length !== 2) {
-  throw new Error(`FAIL: 期望注册 2 个 slot（root + conversation.input.left），实际 ${registered.length}: ${registered.join(',')}`);
+if (registered.length !== 3) {
+  throw new Error(`FAIL: 期望注册 3 个 slot（root + conversation.input.left ×2），实际 ${registered.length}: ${registered.join(',')}`);
 }
-if (!registered.includes('root') || !registered.includes('conversation.input.left')) {
-  throw new Error(`FAIL: 槽位应为 root / conversation.input.left，实际 ${registered.join(',')}`);
+if (!registered.includes('root') || registered.filter((n) => n === 'conversation.input.left').length !== 2) {
+  throw new Error(`FAIL: 槽位应为 root / conversation.input.left ×2，实际 ${registered.join(',')}`);
 }
 console.log(`[4] apply() 注册 ${registered.length} 个槽位（${registered.join(' + ')}）✅`);
 
@@ -160,5 +161,31 @@ if (code.includes('dskDevEditBackdrop')) {
   throw new Error('FAIL: 旧「透明 textarea 叠 shiki 层」编辑器仍在 bundle 中（应已退役）');
 }
 console.log('[9] monaco 内核 + dsk-dark 主题 + codicon 字体已打包，旧叠层编辑器退役 ✅');
+
+// ── C7 聊天区增强断言：inject 增 sessions、浮层样式与回显组件进 bundle、无 sessions 降级不炸 ──
+if (!mod.inject.includes('sessions')) {
+  throw new Error(`FAIL: exports.inject 应包含 'sessions'（C7 提问数据源），实际 ${JSON.stringify(mod.inject)}`);
+}
+if (!code.includes('dskDevAskFloat')) {
+  throw new Error('FAIL: client bundle 缺少 R9 当前提问浮层样式（AskFloat 未打包）');
+}
+if (!code.includes('dsh-develop-ui.history-recall')) {
+  throw new Error('FAIL: client bundle 缺少 R10 历史回显注册（HistoryRecall 未打包）');
+}
+// apply(ctxStub) 未提供 sessions 服务：askFeed 应静默降级（上面 apply 未抛错即通过）
+console.log('[10] C7：inject 含 sessions + AskFloat/HistoryRecall 已打包，无 sessions 服务时降级不炸 ✅');
+
+// ── C8 三区最小化断言：底部栏 4 按钮（📁文件列表/📝文件内容/💬聊天区/>_终端）+ 聊天区弹性让渡进 bundle ──
+// esbuild 将非 ASCII 字符串转义为 \uXXXX（大写 hex），断言前做同形转换
+const esc = (s) => [...s].map((c) => (c.charCodeAt(0) > 127 ? `\\u${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}` : c)).join('');
+for (const label of ['文件列表', '文件内容', '聊天区', '终端']) {
+  if (!code.includes(esc(label))) {
+    throw new Error(`FAIL: client bundle 缺少底部栏按钮「${label}」（C8 三区最小化还原文关）`);
+  }
+}
+if (!code.includes('toggleChat')) {
+  throw new Error('FAIL: client bundle 缺少 toggleChat action（DevLayoutStore 聊天区最小化未打包）');
+}
+console.log('[11] C8：底部栏 4 按钮（文件列表/文件内容/聊天区/终端）+ toggleChat 已打包 ✅');
 
 console.log('SMOKE PASS');

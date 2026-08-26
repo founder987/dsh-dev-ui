@@ -15,34 +15,37 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { defineStore } from '@deepseek-ai/dsh-client-runtime/client';
-import { IconCodeOutline16, IconFolderClose16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconCodeOutline16, IconEditOutline16, IconFolderClose16, IconFolderOpen16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { isPanelOpen, setPanelOpen, subscribePanel } from '../filetree/store';
-import { getFileState, subscribeFile } from '../filetree/fileStore';
+import { getFileState, setEditorOpen, subscribeFile } from '../filetree/fileStore';
 import { WorkbenchEditor, WorkbenchTree } from '../filetree/Workbench';
 import { TermPanel } from '../terminal/TermPanel';
 import { getTermState, subscribeTerm, togglePanel as toggleTermPanel } from '../terminal/termStore';
+import { AskFloat } from '../conversation/AskFloat';
+import {
+  computeDevColumns,
+  DETAILS_DEFAULT,
+  DETAILS_MAX,
+  DETAILS_MIN,
+  EDITOR_MAX,
+  EDITOR_MIN,
+  TREE_DEFAULT,
+  TREE_MAX,
+  TREE_MIN,
+} from './devColumns';
 
 /** 上次工作区路径（与 WorkbenchTree 同源：session cwd → recentWorkspace → localStorage 回退） */
-const ROOT_PATH_KEY = 'dsk-develop-ui.rootPath';
+const ROOT_PATH_KEY = 'dsh-develop-ui.rootPath';
 
-/* ── 列宽契约（sidebar/details 对齐官方 columns.ts；tree/editor 为本插件列） ── */
-const CENTER_MIN = 640;
+/* ── 列宽契约（sidebar 对齐官方 columns.ts；树/内容/详情/中心约束见 devColumns.ts） ── */
 const SIDEBAR_MIN = 264;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 280;
 const SIDEBAR_COLLAPSED = 56;
 const SIDEBAR_AUTO_COLLAPSE = 1024;
-const DETAILS_MIN = 300;
-const DETAILS_MAX = 520;
-const DETAILS_DEFAULT = 360;
-const TREE_MIN = 240;
-const TREE_MAX = 480;
-const TREE_DEFAULT = 360;
-const EDITOR_MIN = 480;
-const EDITOR_MAX = 1200;
 
-const TREE_WIDTH_KEY = 'dsk-develop-ui.treeWidth';
-const EDITOR_WIDTH_KEY = 'dsk-develop-ui.editorWidth';
+const TREE_WIDTH_KEY = 'dsh-develop-ui.treeWidth';
+const EDITOR_WIDTH_KEY = 'dsh-develop-ui.editorWidth';
 
 function clampWidth(px: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, px));
@@ -69,6 +72,8 @@ export interface DevLayoutState {
   narrowExpanded: boolean;
   tree: number;
   editor: number;
+  /** 聊天区展开（C8：false = center 列 0 宽保挂载，会话状态保留；会话内保持不持久化） */
+  chat: boolean;
 }
 
 export function createDevLayoutStore(): unknown {
@@ -85,6 +90,7 @@ export function createDevLayoutStore(): unknown {
         EDITOR_MIN,
         EDITOR_MAX,
       ),
+      chat: true,
     }),
     actions: {
       setSidebar: (d: DevLayoutState, px: number) => {
@@ -114,41 +120,11 @@ export function createDevLayoutStore(): unknown {
       setEditor: (d: DevLayoutState, px: number) => {
         d.editor = clampWidth(px, EDITOR_MIN, EDITOR_MAX);
       },
+      toggleChat: (d: DevLayoutState) => {
+        d.chat = !d.chat;
+      },
     },
   });
-}
-
-/* ── 五列让渡求解：先压 details（至 min → 派生关闭），再压 editor/tree 至 min，center 兜底 ── */
-interface DevColumns {
-  sidebar: number;
-  tree: number;
-  center: number;
-  editor: number;
-  details: number;
-}
-
-function computeDevColumns(
-  viewport: number,
-  sidebar: number,
-  tree: number,
-  editor: number,
-  details: number,
-): DevColumns {
-  let d = details;
-  let e = editor;
-  let t = tree;
-  const room = (): number => viewport - sidebar - t - e - d;
-  if (room() < CENTER_MIN && d > 0) {
-    d = Math.max(DETAILS_MIN, d - (CENTER_MIN - room()));
-    if (room() < CENTER_MIN) d = 0;
-  }
-  if (room() < CENTER_MIN && e > 0) {
-    e = Math.max(EDITOR_MIN, e - (CENTER_MIN - room()));
-  }
-  if (room() < CENTER_MIN && t > 0) {
-    t = Math.max(TREE_MIN, t - (CENTER_MIN - room()));
-  }
-  return { sidebar, tree: t, center: room(), editor: e, details: d };
 }
 
 /* ── 框架样式（官方 AppFrame.module.css 规则的自有副本 + 树/内容列 + 树行态） ── */
@@ -159,7 +135,7 @@ const FRAME_CSS = `
 .dskDevSidebarCol{grid-row:1/-1;background:var(--dsw-specific-sidebar-fill);border-right:1px solid var(--dsw-alias-border-l1);min-width:0;overflow:hidden}
 .dskDevTreeCol{background:var(--dsw-specific-sidebar-fill,#1e1f24);border-right:1px solid var(--dsw-alias-border-l1,#333);min-width:0;overflow:hidden;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e8ec)}
 .dskDevFrame[data-tree-collapsed] .dskDevTreeCol{border-right:none}
-.dskDevCenterCol{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.dskDevCenterCol{position:relative;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .dskDevEditorCol{position:relative;background:var(--dsw-specific-sidebar-fill,#1e1f24);border-right:1px solid var(--dsw-alias-border-l1,#333);min-width:0;overflow:hidden;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e8ec)}
 .dskDevFrame[data-editor-collapsed] .dskDevEditorCol{border-right:none}
 .dskDevDetailsCol{border-left:1px solid var(--dsw-alias-border-l2);min-width:0;overflow:hidden}
@@ -228,11 +204,17 @@ const FRAME_CSS = `
 .dskDevSandboxPromptActions button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .dskDevSandboxPromptActions .dskDevSandboxPromptPrimary{background:#6c8cff;border-color:#6c8cff;color:#fff}
 .dskDevSandboxPromptActions .dskDevSandboxPromptPrimary:hover{background:#5b7bef}
+.dskDevAskFloat{position:absolute;top:8px;left:8px;right:8px;z-index:8;display:flex;gap:8px;align-items:flex-start;padding:6px 10px;font-size:12px;line-height:1.6;background:var(--dsw-alias-bg-layer-2,#1e1f24);border:1px solid var(--dsw-alias-border-l2,#333);border-radius:6px;box-shadow:var(--dsw-shadow-lv2);color:var(--dsw-alias-label-primary,#e8e8ec)}
+.dskDevAskLabel{flex:none;color:var(--dsw-alias-label-tertiary,#8b8d95);font-size:11px;padding-top:1px}
+.dskDevAskText{flex:1;min-width:0;white-space:pre-wrap;word-break:break-word}
+.dskDevAskText[data-clamped]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.dskDevAskToggle{flex:none;border:none;background:transparent;color:var(--dsw-alias-state-business-primary,#6c8cff);font-size:11px;padding:1px 2px;cursor:pointer}
+.dskDevAskToggle:hover{text-decoration:underline}
 `;
-const FRAME_CSS_TAG_ID = 'dsk-develop-ui/DevFrame.css';
+const FRAME_CSS_TAG_ID = 'dsh-develop-ui/DevFrame.css';
 if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${FRAME_CSS_TAG_ID}"]`) === null) {
   const tag = document.createElement('style');
-  tag.dataset.plugin = 'dsk-develop-ui';
+  tag.dataset.plugin = 'dsh-develop-ui';
   tag.dataset.pluginCss = FRAME_CSS_TAG_ID;
   tag.textContent = FRAME_CSS;
   document.head.appendChild(tag);
@@ -313,6 +295,7 @@ interface DevFrameProps {
     closeDetails: () => void;
     setTree: (px: number) => void;
     setEditor: (px: number) => void;
+    toggleChat: () => void;
   };
   renderSlot: (key: string, owner: Record<string, unknown>) => React.ReactNode;
 }
@@ -379,12 +362,15 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
     })();
 
   const sidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0;
+  // C8：聊天区最小化 = center 0 宽保挂载，editor 弹性吸收余量（见 devColumns）
+  const chatOpen = panels.chat;
   const cols = computeDevColumns(
     viewport,
     sidebarCollapsed ? SIDEBAR_COLLAPSED : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar,
     treeOpen ? panels.tree : 0,
     editorOpen ? panels.editor : 0,
     detailsSession === undefined ? 0 : panels.details,
+    chatOpen,
   );
   const colsRef = useRef(cols);
   colsRef.current = cols;
@@ -436,14 +422,20 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
       <div className="dskDevEditorCol">
         {fileState.tabs.length > 0 && <WorkbenchEditor useSessions={useSessions} />}
       </div>
-      <div className="dskDevCenterCol">{renderSlot('conversation', {})}</div>
+      {/* 聊天列 0 宽保挂载（C8）：visibility 隐藏保 DOM/会话状态，AskFloat 随列隐藏；
+          与内容列双最小化时 1fr 余量留空也不露出会话 */}
+      <div className="dskDevCenterCol" style={{ visibility: chatOpen ? undefined : 'hidden' }}>
+        {/* R9 当前提问浮层（C7-1）：列内顶部 absolute；无提问时组件返回 null */}
+        <AskFloat />
+        {renderSlot('conversation', {})}
+      </div>
       <div className="dskDevDetailsCol">{renderSlot('details', {})}</div>
       {/* 终端面板（C5 v2）：grid-row 2 + grid-column 2/-1（sidebar 列独占全高）；0 高保挂载保会话 */}
       <TermPanel cwd={termCwd} />
       <div className="dskDevOverlayLayer" data-shell-overlay>
         {renderSlot('shell.overlay', {})}
       </div>
-      {/* 底部通用菜单栏（全宽第二 grid 行）：文件列表开关 + 预留通用操作区 */}
+      {/* 底部通用菜单栏（全宽第二 grid 行）：三区最小化还原开关 + 终端（C8） */}
       <div className="dskDevBottomBar">
         <button
           type="button"
@@ -456,7 +448,38 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
         >
           {treeOpen ? <IconFolderOpen16 size={16} /> : <IconFolderClose16 size={16} />}
         </button>
-        {/* 终端面板开关（C5 v2）：data-active 对齐 📁；无专用终端图标，用代码图标 */}
+        {/* 文件内容区开关（C8-2）：无标签时联动打开树列引导点文件 */}
+        <button
+          type="button"
+          className="dskDevBottomBarAction"
+          data-active={editorOpen || undefined}
+          aria-label="文件内容"
+          aria-pressed={editorOpen}
+          title="文件内容"
+          onClick={() => {
+            if (fileState.tabs.length === 0) {
+              setEditorOpen(true);
+              if (!treeOpen) setPanelOpen(true);
+              return;
+            }
+            setEditorOpen(!fileState.editorOpen);
+          }}
+        >
+          <IconEditOutline16 size={16} />
+        </button>
+        {/* 聊天区开关（C8-3）：center 列 0 宽保挂载，会话状态保留 */}
+        <button
+          type="button"
+          className="dskDevBottomBarAction"
+          data-active={chatOpen || undefined}
+          aria-label="聊天区"
+          aria-pressed={chatOpen}
+          title="聊天区"
+          onClick={() => actions.toggleChat()}
+        >
+          <IconNewChatOutline16 size={16} />
+        </button>
+        {/* 终端面板开关（C5 v2）：data-active 对齐其他区域按钮；无专用终端图标，用代码图标 */}
         <button
           type="button"
           className="dskDevBottomBarAction"

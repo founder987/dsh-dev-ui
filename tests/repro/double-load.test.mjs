@@ -14,7 +14,7 @@ const configPath = join(dir, 'empty-cordis.yml');
 writeFileSync(configPath, '[]\n');
 
 const libIndex = fileURLToPath(new URL('../../lib/index.js', import.meta.url));
-const patches = [{ insert: [{ id: 'dsk-develop-ui', name: pathToFileURL(libIndex).href }] }];
+const patches = [{ insert: [{ id: 'dsh-develop-ui', name: pathToFileURL(libIndex).href }] }];
 
 console.log('[repro] boot with 1 insert row（host 半现在依赖 ctx.webServer，prepare 注入 stub）');
 try {

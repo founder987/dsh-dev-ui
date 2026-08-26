@@ -1,4 +1,4 @@
-# dsk-develop-ui
+# dsh-develop-ui
 
 DSH（DeepSeek Harness）一体化开发视图插件：**文件树 + 文件编辑/预览 + agent 对话** 同屏协作。
 
@@ -16,21 +16,21 @@ DSH（DeepSeek Harness）一体化开发视图插件：**文件树 + 文件编�
 
 DSH **profile bundle 插件**（Cordis 双半，社区标准）：
 
-- **host 半**（`src/host/` → `lib/index.js`）：文件系统（`ctx.fs` 版本守卫原子写）、md 渲染（markdown-it + 任务列表）、代码高亮（shiki）；经 **`ctx.webServer` HTTP 路由**（`/api/dsk-develop-ui/*`）暴露给浏览器半（含本机端口校验）
+- **host 半**（`src/host/` → `lib/index.js`）：文件系统（`ctx.fs` 版本守卫原子写）、md 渲染（markdown-it + 任务列表）、代码高亮（shiki）；经 **`ctx.webServer` HTTP 路由**（`/api/dsh-develop-ui/*`）暴露给浏览器半（含本机端口校验）
 - **client 半**（`src/client/` → `lib/client.js`）：`__ModuleLoader__` lazy-CJS 格式 React UI；经 fetch 调 host 路由；三个槽位：sidebar.footer.action（📁）、shell.overlay（面板）、conversation.input.left（@文件）
 
 ## 安装（手动，DSH Desktop）
 
 ```powershell
 # ① 打包
-pnpm pack                                    # → dsk-develop-ui-0.1.0.tgz
+pnpm pack                                    # → dsh-develop-ui-0.1.0.tgz
 
 # ② 安装到 desktop profile
 cd C:\Users\User\.dsh\profiles\desktop
-pnpm add "E:\...\dsk-develop-ui-0.1.0.tgz"
+pnpm add "E:\...\dsh-develop-ui-0.1.0.tgz"
 
 # ③ 编辑 C:\Users\User\.dsh\profiles\desktop\package.json：
-#    dsh.profile.bundles 追加 "dsk-develop-ui"
+#    dsh.profile.bundles 追加 "dsh-develop-ui"
 
 # ④ 重启 DSH Desktop
 ```

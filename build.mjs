@@ -36,7 +36,7 @@ await build({
 // 并包装为 DSH 要求的 __ModuleLoader__ lazy-CJS 模块格式
 // （见 specs/开发规范.md 第 4 节与 docs/开发记录/M0-技术验证.md）
 const clientBanner = `window.__ModuleLoader__.load({
-  id: "dsk-develop-ui",
+  id: "dsh-develop-ui",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -81,7 +81,7 @@ const monacoCssInjectPlugin = {
         contents: [
           `const css=${JSON.stringify(css)};`,
           `if (typeof document !== 'undefined') {`,
-          `  const key = 'dsk-develop-ui/monaco:${fileName}';`,
+          `  const key = 'dsh-develop-ui/monaco:${fileName}';`,
           `  if (document.querySelector('style[data-plugin-css="' + key + '"]') === null) {`,
           `    const tag = document.createElement('style');`,
           `    tag.dataset.pluginCss = key;`,

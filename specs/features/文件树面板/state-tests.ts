@@ -1,6 +1,7 @@
 /**
  * 文件树面板 · 状态流转测试用例（S1–S10，见 交互设计.md 第 6 节）
  * 变更 C5：终端入口状态机与 T1–T8 用例（见 交互设计.md 3.1 节）
+ * 变更 C7：当前提问浮层状态机（Q1–Q4）与 ↑↓ 历史回显状态机（Q5–Q8，见 交互设计.md 3.2 节）
  * 运行：npx tsx tests/... 或按状态机逐条人工验证（原型 prototype/index.html 可操作演示）
  */
 
@@ -117,6 +118,91 @@ export function runTerminal(): { passed: number; failed: number } {
   return { passed, failed };
 }
 
+/* ---------- 聊天区增强（变更 C7：R9 当前提问浮层 + R10 ↑↓ 历史回显）---------- */
+
+export type AskFloatState =
+  | 'ask-hidden' // 当前会话无用户提问（不渲染不占位）
+  | 'ask-collapsed' // 默认：折叠仅前 2 行
+  | 'ask-expanded'; // 展开全文
+
+export const ASK_FLOAT_TRANSITIONS: Array<{ from: AskFloatState[]; event: string; to: AskFloatState; guard?: string }> = [
+  { from: ['ask-hidden'], event: 'new-question', to: 'ask-collapsed', guard: '首条用户提问到达' },
+  { from: ['ask-collapsed', 'ask-expanded'], event: 'new-question', to: 'ask-collapsed', guard: '新提问到达即更新并复位折叠' },
+  { from: ['ask-collapsed'], event: 'expand', to: 'ask-expanded', guard: '内容超 2 行才显示「展开」' },
+  { from: ['ask-expanded'], event: 'collapse', to: 'ask-collapsed' },
+  { from: ['ask-collapsed', 'ask-expanded'], event: 'session-clear', to: 'ask-hidden', guard: '切到无提问会话' },
+];
+
+export type RecallState =
+  | 'recall-idle' // 未回显（↑↓ 放行官方默认行为）
+  | 'recalling'; // 回显中（已暂存草稿，index 指向历史队列）
+
+export const RECALL_TRANSITIONS: Array<{ from: RecallState[]; event: string; to: RecallState; guard?: string }> = [
+  { from: ['recall-idle'], event: 'arrow-up', to: 'recalling', guard: '草稿为空或光标在首行；暂存当前草稿，回显最近一条' },
+  { from: ['recall-idle'], event: 'arrow-up', to: 'recall-idle', guard: '光标不在首行 → 放行默认（不转移）' },
+  { from: ['recall-idle'], event: 'arrow-down', to: 'recall-idle', guard: '未回显 ↓ 放行默认' },
+  { from: ['recalling'], event: 'arrow-up', to: 'recalling', guard: '回显更早一条；到顶停留' },
+  { from: ['recalling'], event: 'arrow-down', to: 'recalling', guard: '回显更新一条' },
+  { from: ['recalling'], event: 'arrow-down', to: 'recall-idle', guard: '越过最新 → 恢复暂存草稿并退出回显' },
+  { from: ['recalling'], event: 'send', to: 'recall-idle', guard: '发送回显内容；该提问入历史队列' },
+  { from: ['recall-idle', 'recalling'], event: 'session-switch', to: 'recall-idle', guard: '历史队列与回显状态重置' },
+];
+
+export function canAskFloatTransition(state: AskFloatState, event: string): boolean {
+  return ASK_FLOAT_TRANSITIONS.some((t) => t.from.includes(state) && t.event === event);
+}
+export function canRecallTransition(state: RecallState, event: string): boolean {
+  return RECALL_TRANSITIONS.some((t) => t.from.includes(state) && t.event === event);
+}
+
+export const ASK_FLOAT_CASES: Array<{ id: string; steps: Array<[AskFloatState, string, AskFloatState]> }> = [
+  { id: 'Q1-首条提问出现', steps: [['ask-hidden', 'new-question', 'ask-collapsed']] },
+  {
+    id: 'Q2-超长提问展开收起',
+    steps: [
+      ['ask-hidden', 'new-question', 'ask-collapsed'],
+      ['ask-collapsed', 'expand', 'ask-expanded'],
+      ['ask-expanded', 'collapse', 'ask-collapsed'],
+    ],
+  },
+  {
+    id: 'Q3-新提问复位折叠',
+    steps: [
+      ['ask-hidden', 'new-question', 'ask-collapsed'],
+      ['ask-collapsed', 'expand', 'ask-expanded'],
+      ['ask-expanded', 'new-question', 'ask-collapsed'],
+    ],
+  },
+  { id: 'Q4-切到无提问会话', steps: [['ask-collapsed', 'session-clear', 'ask-hidden']] },
+];
+
+export const RECALL_CASES: Array<{ id: string; steps: Array<[RecallState, string, RecallState]> }> = [
+  { id: 'Q5-空草稿上键回显', steps: [['recall-idle', 'arrow-up', 'recalling']] },
+  {
+    id: 'Q6-回显遍历并恢复草稿',
+    steps: [
+      ['recall-idle', 'arrow-up', 'recalling'],
+      ['recalling', 'arrow-up', 'recalling'],
+      ['recalling', 'arrow-down', 'recalling'],
+      ['recalling', 'arrow-down', 'recall-idle'],
+    ],
+  },
+  {
+    id: 'Q7-发送回显内容入历史',
+    steps: [
+      ['recall-idle', 'arrow-up', 'recalling'],
+      ['recalling', 'send', 'recall-idle'],
+    ],
+  },
+  {
+    id: 'Q8-切会话重置',
+    steps: [
+      ['recall-idle', 'arrow-up', 'recalling'],
+      ['recalling', 'session-switch', 'recall-idle'],
+    ],
+  },
+];
+
 /* ---------- 测试用例 ---------- */
 
 export const CASES: Array<{ id: string; steps: Array<[PanelState, string, PanelState]> }> = [
@@ -190,6 +276,14 @@ export function run(): { passed: number; failed: number } {
   const term = runTerminal();
   passed += term.passed;
   failed += term.failed;
+  for (const c of ASK_FLOAT_CASES) {
+    const ok = c.steps.every(([from, event]) => canAskFloatTransition(from, event));
+    if (ok) { passed += 1; console.log(`PASS ${c.id}`); } else { failed += 1; console.error(`FAIL ${c.id}`); }
+  }
+  for (const c of RECALL_CASES) {
+    const ok = c.steps.every(([from, event]) => canRecallTransition(from, event));
+    if (ok) { passed += 1; console.log(`PASS ${c.id}`); } else { failed += 1; console.error(`FAIL ${c.id}`); }
+  }
   console.log(`\n结果: ${passed} 通过, ${failed} 失败`);
   return { passed, failed };
 }

@@ -4,7 +4,7 @@
  * 功能：路径输入加载目录树 → 点击文件夹展开 → 点击文件查看内容 →
  * md 源码/预览切换 → 代码高亮 → textarea 编辑 + dirty + Ctrl+S 保存（版本守卫）；
  * @文件 引用模式：composer 按钮触发，选文件后点"引用"注入对话。
- * 数据经 fetch 调 host 路由 /api/dsk-develop-ui/*（参照 market 模式）。
+ * 数据经 fetch 调 host 路由 /api/dsh-develop-ui/*（参照 market 模式）。
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
@@ -16,10 +16,10 @@ import {
   subscribePanel,
 } from './store';
 
-const API = '/api/dsk-develop-ui';
+const API = '/api/dsh-develop-ui';
 
 /** 上次工作区路径（localStorage 记忆，MVP 替代自动检测） */
-const ROOT_PATH_KEY = 'dsk-develop-ui.rootPath';
+const ROOT_PATH_KEY = 'dsh-develop-ui.rootPath';
 
 /** 图片扩展名（预览用） */
 const IMAGE_EXT_PATTERN = /\.(png|jpe?g|gif|svg|webp|bmp|ico)$/i;

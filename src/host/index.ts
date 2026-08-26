@@ -1,6 +1,6 @@
 /**
- * dsk-develop-ui host 半入口。
- * 经 ctx.webServer 注册 HTTP 路由（/api/dsk-develop-ui/*），client 半 fetch 调用
+ * dsh-develop-ui host 半入口。
+ * 经 ctx.webServer 注册 HTTP 路由（/api/dsh-develop-ui/*），client 半 fetch 调用
  * （参照 dsh-community-market 的第三方插件模式）。
  * 所有路由带本机端口校验（isLocalRequest），写操作为 POST + 版本守卫。
  */
@@ -13,7 +13,7 @@ import { highlightCode, highlightFile } from './highlight';
 import { TerminalService, type PtyFactory } from './terminal';
 import { isLocalRequest, readJson, sendJson } from './http-util';
 
-const API_PREFIX = '/api/dsk-develop-ui';
+const API_PREFIX = '/api/dsh-develop-ui';
 
 type Req = Parameters<Parameters<Context['webServer']['register']>[0]['handler']>[0];
 type Res = Parameters<Parameters<Context['webServer']['register']>[0]['handler']>[1];
@@ -40,12 +40,12 @@ function sendError(res: Res, error: unknown): void {
 }
 
 export function apply(ctx: Context): void {
-  console.log('[dsk-develop-ui] host half loaded');
+  console.log('[dsh-develop-ui] host half loaded');
 
   const webServer = ctx.webServer;
   const expectedPort = webServer.port;
 
-  // 列目录：GET /api/dsk-develop-ui/fs/list-dir?path=<绝对路径>
+  // 列目录：GET /api/dsh-develop-ui/fs/list-dir?path=<绝对路径>
   webServer.register({
     kind: 'exact',
     path: `${API_PREFIX}/fs/list-dir`,
@@ -67,7 +67,7 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // 读取文件：GET /api/dsk-develop-ui/fs/read-text?path=<绝对路径>
+  // 读取文件：GET /api/dsh-develop-ui/fs/read-text?path=<绝对路径>
   webServer.register({
     kind: 'exact',
     path: `${API_PREFIX}/fs/read-text`,
@@ -89,7 +89,7 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // 读取图片：GET /api/dsk-develop-ui/fs/read-image?path=<绝对路径>
+  // 读取图片：GET /api/dsh-develop-ui/fs/read-image?path=<绝对路径>
   webServer.register({
     kind: 'exact',
     path: `${API_PREFIX}/fs/read-image`,
@@ -111,7 +111,7 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // 写入文件：POST /api/dsk-develop-ui/fs/write-text { path, content, expectedVersion }
+  // 写入文件：POST /api/dsh-develop-ui/fs/write-text { path, content, expectedVersion }
   webServer.register({
     kind: 'exact',
     path: `${API_PREFIX}/fs/write-text`,
@@ -135,7 +135,7 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // md 渲染：POST /api/dsk-develop-ui/md/render { source }
+  // md 渲染：POST /api/dsh-develop-ui/md/render { source }
   webServer.register({
     kind: 'exact',
     path: `${API_PREFIX}/md/render`,
@@ -157,7 +157,7 @@ export function apply(ctx: Context): void {
     },
   });
 
-  // 代码高亮：POST /api/dsk-develop-ui/highlight { source, filename, lang? }
+  // 代码高亮：POST /api/dsh-develop-ui/highlight { source, filename, lang? }
   // lang 可选（直接指定时优先）；缺省按 filename 扩展名推断
   webServer.register({
     kind: 'exact',
@@ -322,5 +322,5 @@ export function apply(ctx: Context): void {
     },
   });
 
-  console.log(`[dsk-develop-ui] routes mounted at ${API_PREFIX}/*`);
+  console.log(`[dsh-develop-ui] routes mounted at ${API_PREFIX}/*`);
 }

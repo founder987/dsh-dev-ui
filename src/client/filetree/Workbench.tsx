@@ -41,10 +41,10 @@ import {
 } from './fileStore';
 import { MonacoEditorArea } from './MonacoEditorArea';
 
-const API = '/api/dsk-develop-ui';
+const API = '/api/dsh-develop-ui';
 
 /** 上次工作区路径（localStorage 记忆，MVP 替代自动检测） */
-const ROOT_PATH_KEY = 'dsk-develop-ui.rootPath';
+const ROOT_PATH_KEY = 'dsh-develop-ui.rootPath';
 
 interface TreeNode {
   name: string;

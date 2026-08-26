@@ -1,4 +1,4 @@
-# dsk-develop-ui bundle patch：本插件作为 profile bundle 的加载层。
+# dsh-develop-ui bundle patch：本插件作为 profile bundle 的加载层。
 # profile bundles 数组中的包 = 一个"层"，层的行 = 本文件内容，
 # 因此必须 insert 自己（官方 dsh-web-app 同样 insert 自身行）。
 # inject 声明 host 半访问的 ctx 服务（cordis 服务访问必须有 inject 声明）：
@@ -6,6 +6,6 @@
 #  - fs：文件系统服务（dsh-fs）
 # 2026-08-21 修正：apply 内不再显式 ctx.provide（Service 构造自动注册）。
 - insert:
-    - id: dsk-develop-ui
-      name: dsk-develop-ui
+    - id: dsh-develop-ui
+      name: dsh-develop-ui
       inject: ['webServer', 'fs']

@@ -10,11 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-mkdirSync(join(root, 'lib', 'probe'), { recursive: true });
+// 探针产物输出到 lib 之外（lib 整体进 npm 包，探针产物不应发布）
+const probeDir = join(root, '.probe');
+mkdirSync(probeDir, { recursive: true });
 
 // 探针入口：仅 standalone editor + 常用语言 monarch 高亮（不含语言服务，无 worker）
 writeFileSync(
-  join(root, 'lib', 'probe', 'entry.js'),
+  join(probeDir, 'entry.js'),
   `import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
    import 'monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles.js';
    import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution';
@@ -79,8 +81,8 @@ const cssInjectPlugin = {
 };
 
 await build({
-  entryPoints: [join(root, 'lib', 'probe', 'entry.js')],
-  outfile: join(root, 'lib', 'probe', 'monaco-probe.js'),
+  entryPoints: [join(probeDir, 'entry.js')],
+  outfile: join(probeDir, 'monaco-probe.js'),
   bundle: true,
   format: 'cjs',
   platform: 'browser',
@@ -90,7 +92,7 @@ await build({
   loader: { '.ttf': 'dataurl', '.woff': 'dataurl', '.woff2': 'dataurl' },
 });
 
-const code = readFileSync(join(root, 'lib', 'probe', 'monaco-probe.js'), 'utf8');
+const code = readFileSync(join(probeDir, 'monaco-probe.js'), 'utf8');
 const kb = Math.round(code.length / 1024);
 console.log(`[1] 打包成功，体积 ${kb} KB（minified）`);
 
