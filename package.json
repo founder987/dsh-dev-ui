@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "DSH 一体化开发视图插件：文件树 + 编辑/预览 + agent 对话（dual-half Cordis plugin）",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/founder987/dsh-dev-ui.git"
