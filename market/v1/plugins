@@ -24,11 +24,11 @@
         "name": "dsh-develop-ui"
       },
       "repository": {
-        "url": "https://gitee.com/freefangzheng/dsh-code-ui.git"
+        "url": "https://github.com/founder987/dsh-dev-ui.git"
       },
       "publisher": {
         "name": "fangzheng",
-        "url": "https://gitee.com/freefangzheng"
+        "url": "https://github.com/founder987"
       },
       "updatedAt": "2026-08-26T00:00:00.000Z"
     }

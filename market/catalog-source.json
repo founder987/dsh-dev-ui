@@ -3,10 +3,10 @@
   "providerId": "dev.fangzheng.dsh-catalog",
   "name": "Fangzheng DSH Plugins",
   "description": "个人 DSH 插件目录：当前收录 dsh-develop-ui（一体化开发视图：文件树 + 编辑/预览 + agent 对话 + 内嵌终端）",
-  "homepage": "https://gitee.com/freefangzheng/dsh-code-ui",
+  "homepage": "https://github.com/founder987/dsh-dev-ui",
   "attribution": {
     "name": "fangzheng",
-    "url": "https://gitee.com/freefangzheng"
+    "url": "https://github.com/founder987"
   },
   "transport": {
     "kind": "https-json",
