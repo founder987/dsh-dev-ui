@@ -1,0 +1,12 @@
+{
+  "$schema": "../schema/plugin.schema.json",
+  "id": "founder987/dsh-dev-ui",
+  "name": "dsh-dev-ui",
+  "repository": "https://github.com/founder987/dsh-dev-ui",
+  "category": "dev",
+  "description": {
+    "en": "All-in-one development view for DSH: file tree with lazy loading, file view/edit with version-guarded save, code highlighting, markdown preview, agent chat integration and an embedded terminal panel.",
+    "zh": "DSH 一体化开发视图：懒加载文件树、文件查看与编辑（版本守卫保存）、代码高亮、Markdown 预览、agent 对话集成与内嵌终端面板。"
+  },
+  "added": "2026-08-27"
+}

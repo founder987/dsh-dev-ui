@@ -1,6 +1,6 @@
 {
   "name": "dsh-develop-ui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH 一体化开发视图插件：文件树 + 编辑/预览 + agent 对话（dual-half Cordis plugin）",
   "license": "MIT",
   "publishConfig": {

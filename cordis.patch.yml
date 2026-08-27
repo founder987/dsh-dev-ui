@@ -9,3 +9,11 @@
     - id: dsh-develop-ui
       name: dsh-develop-ui
       inject: ['webServer', 'fs']
+# 禁用官方 ui-layout：本插件接替布局提供者角色（ctx.layout 服务、root 槽五列框架、
+# 主题呈现）。此行必须放在本 bundle patch 内而不是 profile overlay：宿主在 bundle
+# 被禁用/卸载时会整层跳过本 patch（profile.js loadRecoveryFilteredProfile 的
+# continue 分支），ui-layout 随之自动恢复，禁用/卸载后不再闪退。
+# 2026-08-27 修正：原先此行在 profile cordis.patch.yml，导致市场禁用插件后无布局
+# 提供者闪退、启用插件但未禁用 ui-layout 时报 service "layout" has been registered。
+- id: ui-layout
+  disabled: true
