@@ -22,7 +22,7 @@ const bundled = buildSync({
 });
 const mod = { exports: {} };
 new Function('module', 'exports', bundled.outputFiles[0].text)(mod, mod.exports);
-const { extractUserQuestions, createAskFeed, recallMove, RECALL_IDLE } = mod.exports;
+const { extractUserQuestions, extractUserQuestionEntries, createAskFeed, recallMove, pickQuestionAtScroll, RECALL_IDLE } = mod.exports;
 
 let passed = 0;
 let failed = 0;
@@ -82,6 +82,40 @@ test('A4 结构漂移降级为空数组', () => {
   assert.deepEqual(extractUserQuestions({}), []);
   assert.deepEqual(extractUserQuestions({ nodes: null }), []);
   assert.deepEqual(extractUserQuestions({ nodes: 'not-a-map' }), []);
+});
+
+test('A5 回归：MutableChatNodeStore 式类 Map（非 Map 实例）也能提取', () => {
+  // 对齐 ui-conversation ChatSnapshotBuilder：nodes 是普通 class（仅 get/values），
+  // 不是原生 Map——instanceof Map 守卫曾误判为空队列（C7 双功能失效根因）
+  class FakeNodeStore {
+    constructor(entries) { this.byKey = new Map(entries); }
+    get(key) { return this.byKey.get(key); }
+    values() { return this.byKey.values(); }
+  }
+  const chat = {
+    nodes: new FakeNodeStore([
+      userNode('u1', 1, '类Map问题一'),
+      userNode('u2', 2, '类Map问题二', 'steering'),
+    ]),
+  };
+  assert.deepEqual(extractUserQuestions(chat), ['类Map问题一', '类Map问题二']);
+});
+
+test('A6 回归：content 为 ContentBlock[] 时拼接 text 块（真机形状）', () => {
+  // 运行期 data.content 是 [{type:'text', text}]（可含 image 块），不是 string
+  const node = (key, seq, content) => [key, {
+    key, kind: 'user', id: key, anchorSeq: seq, visibility: 'visible',
+    data: { kind: 'user', seq, time: seq, content, source: { kind: 'user' } },
+  }];
+  const chat = {
+    nodes: new Map([
+      node('u1', 1, [{ type: 'text', text: '第一段' }, { type: 'image', attachment: {} }, { type: 'text', text: '第二段' }]),
+      node('u2', 2, [{ type: 'image', attachment: {} }]), // 纯图片 → 跳过
+      node('u3', 3, []), // 空块 → 跳过
+      node('u4', 4, [{ type: 'text', text: '  ' }]), // 空白 → 跳过
+    ]),
+  };
+  assert.deepEqual(extractUserQuestions(chat), ['第一段\n第二段']);
 });
 
 /* ── B 组：createAskFeed 订阅链 ── */
@@ -172,6 +206,19 @@ test('B5 current 指向不存在的会话 → 空队列不抛错', () => {
   assert.deepEqual(feed.getSnapshot().questions, []);
 });
 
+test('B7 快照 entries 含节点 key（浮层滚动定位用）', () => {
+  const s = fakeSessions();
+  const feed = createAskFeed();
+  feed.bindSessions(s);
+  const sess = fakeSession({ nodes: new Map([userNode('u1', 1, '甲'), userNode('u2', 2, '乙')]) });
+  s.manager.sessions.set('sess-1', sess);
+  s.list.set({ current: 'sess-1' });
+  assert.deepEqual(feed.getSnapshot().entries, [
+    { key: 'u1', text: '甲' },
+    { key: 'u2', text: '乙' },
+  ]);
+});
+
 test('B6 绑定面缺失（无 manager）→ 静默降级', () => {
   const feed = createAskFeed();
   feed.bindSessions({ list: fakeStore({ current: 'x' }) });
@@ -223,6 +270,34 @@ test('C5 回显期间历史队列变长（新提问入列）不崩', () => {
   const r3 = recallMove(r2.state, 1, ['甲', '乙'], '暂存');
   assert.equal(r3.draft, '暂存');
   assert.equal(r3.state.active, false);
+});
+
+/* ── D 组：pickQuestionAtScroll 滚动定位 ── */
+
+test('D1 第一可见行本身是提问行 → 选中它', () => {
+  const entries = [{ key: 'q1', text: '一' }, { key: 'q2', text: '二' }];
+  assert.equal(pickQuestionAtScroll(entries, ['q1', 'a1', 'q2', 'a2'], 2), 'q2');
+});
+
+test('D2 第一可见行是回答行 → 回溯上方最近提问', () => {
+  const entries = [{ key: 'q1', text: '一' }, { key: 'q2', text: '二' }];
+  assert.equal(pickQuestionAtScroll(entries, ['q1', 'a1', 'a2', 'q2', 'a3'], 2), 'q1');
+  assert.equal(pickQuestionAtScroll(entries, ['q1', 'a1', 'a2', 'q2', 'a3'], 4), 'q2');
+});
+
+test('D3 第一可见行在所有提问之前 → null（调用方回退第一条）', () => {
+  const entries = [{ key: 'q1', text: '一' }];
+  assert.equal(pickQuestionAtScroll(entries, ['ctx1', 'ctx2', 'q1'], 1), null);
+});
+
+test('D4 空条目或空行 → null', () => {
+  assert.equal(pickQuestionAtScroll([], ['a1'], 0), null);
+  assert.equal(pickQuestionAtScroll([{ key: 'q1', text: '一' }], [], 0), null);
+});
+
+test('D5 firstVisible 越界钳制到末行', () => {
+  const entries = [{ key: 'q2', text: '二' }];
+  assert.equal(pickQuestionAtScroll(entries, ['q1x', 'q2'], 99), 'q2');
 });
 
 console.log(`\n结果: ${passed} 通过, ${failed} 失败`);

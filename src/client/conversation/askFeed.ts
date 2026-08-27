@@ -4,6 +4,12 @@
  *  - extractUserQuestions：会话快照 chat.nodes → 用户提问队列（升序、连续去重）。
  *    节点形状见 C7-0 探针：{ kind, visibility, data: { kind, seq, content } }，
  *    kind ∈ 'user' | 'steering'；全部访问做 typeof 守卫，结构漂移降级为空数组。
+ *    注意两处运行期与类型层的差异（2026-08-26 真机实证）：
+ *      1. chat.nodes 不是原生 Map——ui-conversation 的 ChatSnapshotBuilder 用
+ *         MutableChatNodeStore（普通 class，仅 get/values/replace/upsert），故按
+ *         values 方法鸭式判定而非 instanceof Map；
+ *      2. data.content 不是 string——运行期为 ContentBlock[]（[{type:'text',text}]），
+ *         需拼接 text 块（contentToText）。
  *  - createAskFeed：ctx.sessions（SessionRuntime）→ list.current → manager.sessions
  *    → Session.subscribe/getSnapshot 的订阅链；快照引用稳定（useSyncExternalStore
  *    契约）；任一环节缺失静默降级为空队列 + 一次性诊断。
@@ -11,47 +17,124 @@
  *    交互在 HistoryRecall.tsx，此处保持纯净可测。
  */
 
+/** 提问条目：浮层滚动定位需要节点 key（DOM data-chat-flow-key 与之一致）。 */
+export interface AskEntry {
+  /** 会话节点 key（聊天行 DOM 的 data-chat-flow-key） */
+  key: string;
+  /** 提问纯文本（contentToText 拼接结果） */
+  text: string;
+}
+
 /** askFeed 对外快照（引用稳定：内容不变时返回同一对象）。 */
 export interface AskFeedSnapshot {
   /** 当前会话 id（无选定为 undefined） */
   sessionId?: string;
-  /** 当前会话用户提问队列（时间升序、连续去重） */
+  /** 当前会话用户提问队列（时间升序、连续去重）——↑↓ 回显用 */
   questions: string[];
+  /** 当前会话提问条目（seq 升序、不去重、含节点 key）——浮层滚动定位用 */
+  entries: AskEntry[];
 }
 
-const EMPTY_FEED: AskFeedSnapshot = { questions: [] };
+const EMPTY_FEED: AskFeedSnapshot = { questions: [], entries: [] };
 
 interface ChatNodeLike {
+  key?: unknown;
   kind?: unknown;
   visibility?: unknown;
   data?: unknown;
 }
 
 /**
- * 从会话快照 chat 提取用户提问队列。
- * @param chat 会话快照的 chat 字段（未知形状，逐项守卫）
- * @returns 用户提问文本数组（seq 升序、连续重复去一）；结构不符时返回 []
+ * user/steering 节点 data.content → 纯文本。
+ * 运行期为 ContentBlock[]（[{type:'text', text}]，可含 image 等非文本块）；
+ * 字符串形态保留兼容。无文本内容返回 null（该节点不计入提问队列）。
  */
-export function extractUserQuestions(chat: unknown): string[] {
+function contentToText(content: unknown): string | null {
+  if (typeof content === 'string') return content.trim().length > 0 ? content : null;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (block === null || typeof block !== 'object') continue;
+      const b = block as { type?: unknown; text?: unknown };
+      if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+    }
+    const joined = parts.join('\n');
+    return joined.trim().length > 0 ? joined : null;
+  }
+  return null;
+}
+
+/**
+ * 从会话快照 chat 提取用户提问条目（含节点 key，供浮层按滚动位置定位）。
+ * @param chat 会话快照的 chat 字段（未知形状，逐项守卫）
+ * @returns 提问条目数组（seq 升序、不去重）；结构不符时返回 []
+ */
+export function extractUserQuestionEntries(chat: unknown): AskEntry[] {
   if (chat === null || typeof chat !== 'object') return [];
   const nodes = (chat as { nodes?: unknown }).nodes;
-  if (!(nodes instanceof Map)) return [];
-  const picked: Array<{ seq: number; content: string }> = [];
-  for (const node of nodes.values()) {
+  // 鸭式判定：原生 Map 与 MutableChatNodeStore 都有 values()；其余形状降级
+  const valuesOf = (nodes as { values?: unknown } | null | undefined)?.values;
+  if (typeof valuesOf !== 'function') return [];
+  let iterable: Iterable<unknown>;
+  try {
+    iterable = (valuesOf as () => Iterable<unknown>).call(nodes);
+  } catch {
+    return [];
+  }
+  const picked: Array<{ seq: number; entry: AskEntry }> = [];
+  for (const node of iterable) {
     const n = node as ChatNodeLike;
     if (n.kind !== 'user' && n.kind !== 'steering') continue;
     if (n.visibility !== undefined && n.visibility !== 'visible') continue;
     const data = n.data as { seq?: unknown; content?: unknown } | null | undefined;
     if (data === null || typeof data !== 'object') continue;
-    if (typeof data.content !== 'string' || data.content.trim().length === 0) continue;
-    picked.push({ seq: typeof data.seq === 'number' ? data.seq : 0, content: data.content });
+    const text = contentToText(data.content);
+    if (text === null) continue;
+    picked.push({
+      seq: typeof data.seq === 'number' ? data.seq : 0,
+      entry: { key: typeof n.key === 'string' ? n.key : '', text },
+    });
   }
   picked.sort((a, b) => a.seq - b.seq);
+  return picked.map((p) => p.entry);
+}
+
+/**
+ * 从会话快照 chat 提取用户提问队列（↑↓ 回显用）。
+ * @param chat 会话快照的 chat 字段（未知形状，逐项守卫）
+ * @returns 用户提问文本数组（seq 升序、连续重复去一）；结构不符时返回 []
+ */
+export function extractUserQuestions(chat: unknown): string[] {
+  const entries = extractUserQuestionEntries(chat);
   const out: string[] = [];
-  for (const p of picked) {
-    if (out[out.length - 1] !== p.content) out.push(p.content);
+  for (const e of entries) {
+    if (out[out.length - 1] !== e.text) out.push(e.text);
   }
   return out;
+}
+
+/**
+ * 滚动定位纯函数：第一可见行所属提问的 key。
+ * 聊天行 DOM 带 data-chat-flow-key（与节点 key 一致），按 DOM 顺序（=seq 序）。
+ * @param entries 当前会话提问条目（升序）
+ * @param rowKeys 滚动区内全部聊天行的 key（DOM 顺序）
+ * @param firstVisible 第一可见行在 rowKeys 中的下标
+ * @returns 第一可见行或其上方最近提问行的 key；上方无提问行返回 null（调用方回退）
+ */
+export function pickQuestionAtScroll(
+  entries: readonly AskEntry[],
+  rowKeys: readonly string[],
+  firstVisible: number,
+): string | null {
+  if (entries.length === 0 || rowKeys.length === 0) return null;
+  const keys = new Set(entries.map((e) => e.key));
+  let hit: string | null = null;
+  const end = Math.min(firstVisible, rowKeys.length - 1);
+  for (let i = 0; i <= end; i++) {
+    const k = rowKeys[i];
+    if (k !== undefined && keys.has(k)) hit = k;
+  }
+  return hit;
 }
 
 interface StoreLike {
@@ -92,13 +175,17 @@ export function createAskFeed(): AskFeed {
     console.warn(`[dsh-develop-ui] ask-feed unavailable: ${msg}`);
   };
 
-  const publish = (sessionId: string | undefined, questions: string[]): void => {
-    const sameQuestions =
-      questions.length === snapshot.questions.length &&
-      questions.every((q, i) => q === snapshot.questions[i]);
-    if (snapshot.sessionId === sessionId && sameQuestions) return;
+  const publish = (sessionId: string | undefined, entries: AskEntry[]): void => {
+    const sameEntries =
+      entries.length === snapshot.entries.length &&
+      entries.every((e, i) => e.key === snapshot.entries[i]?.key && e.text === snapshot.entries[i]?.text);
+    if (snapshot.sessionId === sessionId && sameEntries) return;
+    const questions: string[] = [];
+    for (const e of entries) {
+      if (questions[questions.length - 1] !== e.text) questions.push(e.text);
+    }
     snapshot =
-      sessionId === undefined && questions.length === 0 ? EMPTY_FEED : { sessionId, questions };
+      sessionId === undefined && entries.length === 0 ? EMPTY_FEED : { sessionId, questions, entries };
     for (const fn of listeners) fn();
   };
 
@@ -108,7 +195,7 @@ export function createAskFeed(): AskFeed {
       return;
     }
     const snap = currentSession.getSnapshot() as { chat?: unknown } | null | undefined;
-    publish(sessionId, extractUserQuestions(snap?.chat));
+    publish(sessionId, extractUserQuestionEntries(snap?.chat));
   };
 
   const followCurrent = (sessions: SessionsLike): void => {
