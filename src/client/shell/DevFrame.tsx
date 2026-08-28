@@ -15,7 +15,7 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { defineStore } from '@deepseek-ai/dsh-client-runtime/client';
-import { IconCodeOutline16, IconEditOutline16, IconFolderClose16, IconFolderOpen16, IconNewChatOutline16 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { IconEditOutline16, IconFolderClose16, IconFolderOpen16, IconQueueOutline14 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { isPanelOpen, setPanelOpen, subscribePanel } from '../filetree/store';
 import { getFileState, setEditorOpen, subscribeFile } from '../filetree/fileStore';
 import { WorkbenchEditor, WorkbenchTree } from '../filetree/Workbench';
@@ -145,7 +145,9 @@ const FRAME_CSS = `
 .dskDevBottomBar{grid-row:3;grid-column:2/-1;display:flex;align-items:center;gap:4px;padding:2px 8px;height:32px;box-sizing:border-box;background:var(--dsw-specific-sidebar-fill,#1e1f24);border-top:1px solid var(--dsw-alias-border-l1,#333);color:var(--dsw-alias-label-primary,#e8e8ec);flex:none;min-width:0;overflow:hidden}
 .dskDevBottomBarAction{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#c9c9d1);cursor:pointer;flex:none}
 .dskDevBottomBarAction:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
-.dskDevBottomBarAction[data-active=true]{color:var(--dsw-alias-label-primary,#e8e8ec)}
+.dskDevBottomBarAction[data-active=true]{background:rgba(108,140,255,.14);color:var(--dsw-alias-label-primary,#e8e8ec)}
+.dskDevBottomBarAction[data-active=true]:hover{background:rgba(108,140,255,.22)}
+.dskDevBottomBarAction:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#6c8cff);outline-offset:1px}
 .dskDevHandle{cursor:col-resize;z-index:2;touch-action:none;width:8px;margin-left:-4px;position:absolute;top:0;bottom:0;transition:left var(--ds-transition-duration-slow,.2s) var(--ds-ease-in-out,ease)}
 .dskDevFrame[data-dragging] .dskDevHandle{transition:none}
 @media (prefers-reduced-motion:reduce){.dskDevHandle{transition:none}}
@@ -210,6 +212,9 @@ const FRAME_CSS = `
 .dskDevAskText[data-clamped]{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .dskDevAskToggle{flex:none;border:none;background:transparent;color:var(--dsw-alias-state-business-primary,#6c8cff);font-size:11px;padding:1px 2px;cursor:pointer}
 .dskDevAskToggle:hover{text-decoration:underline}
+.dskDevAskCopy{flex:none;border:none;background:transparent;color:var(--dsw-alias-state-business-primary,#6c8cff);font-size:11px;padding:1px 2px;cursor:pointer}
+.dskDevAskCopy:hover{text-decoration:underline}
+.dskDevAskCopy[data-copied]{color:var(--dsw-alias-label-tertiary,#8b8d95)}
 `;
 const FRAME_CSS_TAG_ID = 'dsh-develop-ui/DevFrame.css';
 if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css="${FRAME_CSS_TAG_ID}"]`) === null) {
@@ -218,6 +223,23 @@ if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin
   tag.dataset.pluginCss = FRAME_CSS_TAG_ID;
   tag.textContent = FRAME_CSS;
   document.head.appendChild(tag);
+}
+
+/**
+ * 终端图标：primitives 库无 terminal 字形，按官方图标规范手绘（16px 网格、currentColor、
+ * evenodd 单路径、1.2px 描边视觉重量）——圆角控制台窗口 + 标题栏分割线 + `>` 提示符与 `_` 光标。
+ */
+function IconTerminalOutline16({ size = 16, className }: { size?: number; className?: string }): React.JSX.Element {
+  return (
+    <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M3.5 1.3H12.5A2.2 2.2 0 0 1 14.7 3.5V12.5A2.2 2.2 0 0 1 12.5 14.7H3.5A2.2 2.2 0 0 1 1.3 12.5V3.5A2.2 2.2 0 0 1 3.5 1.3ZM3.57 2.47H12.43A1.1 1.1 0 0 1 13.53 3.57V12.43A1.1 1.1 0 0 1 12.43 13.53H3.57A1.1 1.1 0 0 1 2.47 12.43V3.57A1.1 1.1 0 0 1 3.57 2.47ZM2.5 4.55H13.5V5.45H2.5ZM4.35 7.15L7.05 8.8L4.35 10.45ZM7.75 9.55H11.85V10.45H7.75Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
 }
 
 /** 列宽拖拽手柄：pointer capture + rAF 节流（对齐官方 DragHandle 交互） */
@@ -467,7 +489,7 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
         >
           <IconEditOutline16 size={16} />
         </button>
-        {/* 聊天区开关（C8-3）：center 列 0 宽保挂载，会话状态保留 */}
+        {/* 聊天区开关（C8-3）：气泡图标对齐"对话区"语义（原 NewChat 是新建隐喻） */}
         <button
           type="button"
           className="dskDevBottomBarAction"
@@ -477,9 +499,9 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
           title="聊天区"
           onClick={() => actions.toggleChat()}
         >
-          <IconNewChatOutline16 size={16} />
+          <IconQueueOutline14 size={16} />
         </button>
-        {/* 终端面板开关（C5 v2）：data-active 对齐其他区域按钮；无专用终端图标，用代码图标 */}
+        {/* 终端面板开关（C5 v2）：data-active 对齐其他区域按钮；终端用专用手绘控制台图标 */}
         <button
           type="button"
           className="dskDevBottomBarAction"
@@ -489,7 +511,7 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
           title="终端"
           onClick={() => toggleTermPanel(termCwd)}
         >
-          <IconCodeOutline16 size={16} />
+          <IconTerminalOutline16 size={16} />
         </button>
       </div>
       {!sidebarCollapsed && (

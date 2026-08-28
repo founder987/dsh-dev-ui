@@ -23,17 +23,52 @@ DSH **profile bundle 插件**（Cordis 双半，社区标准）：
 
 ```powershell
 # ① 打包
-pnpm pack                                    # → dsh-develop-ui-0.1.0.tgz
+pnpm pack                                    # → dsh-develop-ui-0.1.2.tgz
 
 # ② 安装到 desktop profile
 cd C:\Users\User\.dsh\profiles\desktop
-pnpm add "E:\...\dsh-develop-ui-0.1.0.tgz"
+pnpm add "E:\...\dsh-develop-ui-0.1.2.tgz"
 
 # ③ 编辑 C:\Users\User\.dsh\profiles\desktop\package.json：
 #    dsh.profile.bundles 追加 "dsh-develop-ui"
 
 # ④ 重启 DSH Desktop
 ```
+
+> 启用/禁用/卸载直接用市场或设置 UI 操作即可，无需改任何配置文件：禁用官方
+> `ui-layout` 的 loader patch 已内置在包内 `cordis.patch.yml`（bundle 层），插件被
+> 禁用或卸载时该层整层跳过，官方布局自动恢复。
+
+## 发布到 npm
+
+前置：`package.json` 已固定 `publishConfig`（`registry: registry.npmjs.org`、`access: public`），首次发布需有 npm 账号。
+
+```powershell
+# ① 升版本（npm 不允许覆盖已发布版本）
+npm.cmd version patch        # 0.1.2 → 0.1.3；或手动改 package.json 的 version
+
+# ② 全量构建（esbuild 双入口 + 类型声明）
+node build.mjs && tsc --emitDeclarationOnly
+
+# ③ 发布前自检：确认 tarball 内容完整（package/lib、cordis.patch.yml、README）
+pnpm pack
+tar -tzf dsh-develop-ui-<version>.tgz
+
+# ④ 登录（已登录可跳过；Windows 执行策略禁用 npm.ps1，一律用 npm.cmd）
+npm.cmd login
+npm.cmd whoami               # 验证登录态
+
+# ⑤ 发布
+npm.cmd publish
+
+# ⑥ 验证
+npm.cmd view dsh-develop-ui version
+```
+
+发布后两件事：
+
+1. **同步市场目录**：把 `market/v1/plugins` 的 `latestVersion` 改为新版本号并重新部署（路径 A 自建目录）；1024Store（路径 B）会自动检测 npm 新发布，无需操作。
+2. **不要改动已发布版本的内容**：发现 bug 一律发新版本，不要试图覆盖（npm 本身也不允许）。
 
 ## 开发命令
 

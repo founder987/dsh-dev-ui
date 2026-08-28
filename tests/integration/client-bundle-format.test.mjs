@@ -7,6 +7,7 @@
  * 官方 ui-layout 禁用后由本插件接替）与 conversation.input.left ×2（@文件 按钮 +
  * C7 ↑↓ 历史回显 null 组件）；并提供 ctx.layout 服务（reflect.provide）+
  * ThemePresenter（DOM stub）。C7：exports.inject 增 'sessions'（提问数据源）。
+ * C10：浮层复制按钮（dskDevAskCopy + 「已复制」反馈文案）。
  *
  * 运行：node tests/integration/client-bundle-format.test.mjs
  */
@@ -187,5 +188,14 @@ if (!code.includes('toggleChat')) {
   throw new Error('FAIL: client bundle 缺少 toggleChat action（DevLayoutStore 聊天区最小化未打包）');
 }
 console.log('[11] C8：底部栏 4 按钮（文件列表/文件内容/聊天区/终端）+ toggleChat 已打包 ✅');
+
+// ── C10 提问浮层复制断言：复制按钮样式类 + 「已复制」反馈文案进 bundle ──
+if (!code.includes('dskDevAskCopy')) {
+  throw new Error('FAIL: client bundle 缺少提问浮层复制按钮样式（C10 AskFloat 复制未打包）');
+}
+if (!code.includes(esc('已复制'))) {
+  throw new Error('FAIL: client bundle 缺少复制成功反馈文案「已复制」（C10 AskFloat 复制未打包）');
+}
+console.log('[12] C10：提问浮层复制按钮 + 已复制反馈已打包 ✅');
 
 console.log('SMOKE PASS');
