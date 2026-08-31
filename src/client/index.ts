@@ -28,6 +28,10 @@ import { ThemePresenter } from './shell/theme';
 import { FileRefButton } from './conversation/FileRefButton';
 import { HistoryRecall } from './conversation/HistoryRecall';
 import { askFeed, type SessionsLike } from './conversation/askFeed';
+import { WhitelistEntry, selectShellApproval } from './approval/WhitelistEntry';
+import { installOpenPathInterceptor } from './fileopen/interceptor';
+import { setPanelOpen, setReveal } from './filetree/store';
+import { openFile } from './filetree/fileStore';
 
 type ThemeSnapshot = {
   active: {
@@ -51,9 +55,16 @@ type ClientCtx = {
   };
   /** 官方 runtime 提供的会话运行时（C7 提问浮层/历史回显数据源；缺失时降级） */
   sessions?: SessionsLike;
+  /** 官方 runtime 提供的工作区服务（聊天内打开文件拦截 openPath 用） */
+  workspaces: {
+    openPath: (path: string) => Promise<void>;
+  };
   on: (event: string, handler: (snapshot: ThemeSnapshot) => void) => () => void;
   effect: (disposer: () => void, label?: string) => void;
 };
+
+/** client 半 host 路由前缀（与 src/host/index.ts 的 API_PREFIX 同源） */
+const API_PREFIX = '/api/dsh-develop-ui';
 
 /** 跨插件面板动作面（复制官方 LayoutController 契约，官方条目照常调用）。 */
 class DevLayoutController {
@@ -83,7 +94,7 @@ class DevLayoutController {
  * ctx.theme / ctx.on 必须先在此声明，否则报 "cannot get property ... without inject"。
  * 注意：`layout` 由本插件提供，不在此注入。
  */
-export const inject = ['slots', 'theme', 'sessions'];
+export const inject = ['slots', 'theme', 'sessions', 'workspaces'];
 
 export function apply(ctx: ClientCtx): void {
   console.log('[dsh-develop-ui] client half loaded (layout provider)');
@@ -154,6 +165,47 @@ export function apply(ctx: ClientCtx): void {
     ctx.slots.register(
       { name: 'conversation.input.left', id: 'dsh-develop-ui.history-recall' },
       HistoryRecall,
+    ),
+  );
+
+  // 聊天内打开文件：包装 workspaces.openPath（唯一调用者即聊天文件打开）——
+  // 工作区内文件 → DSH 窗口打开（文件树面板 + 树中定位）；目录/工作区外/失败 → 回落系统。
+  ctx.effect(() => {
+    const interceptor = installOpenPathInterceptor(ctx.workspaces, {
+      statPath: async (path) => {
+        const res = await fetch(`${API_PREFIX}/fs/stat?path=${encodeURIComponent(path)}`);
+        const data: unknown = await res.json();
+        return res.ok ? (data as { type?: unknown }) : undefined;
+      },
+      openInDsh: async (path) => {
+        setPanelOpen(true);
+        await openFile(path);
+        setReveal(path);
+      },
+      currentCwd: () => {
+        const list = ctx.sessions?.list?.getSnapshot() as
+          | { current?: unknown; byId?: Record<string, { cwd?: unknown }> }
+          | undefined;
+        const current = list?.current;
+        if (typeof current !== 'string') return undefined;
+        const cwd = list?.byId?.[current]?.cwd;
+        return typeof cwd === 'string' ? cwd : undefined;
+      },
+    });
+    return () => interceptor.restore();
+  }, 'dsh-develop-ui: openPath interceptor');
+
+  // 命令白名单：conversation.composer chain 条目（shell 命令审批三键 + 白名单自动放行）。
+  // priority 默认 0，先于官方 ApprovalPanel（priority 1）评估：selector 命中
+  // shell 命令类 approval → 本条目接管；非 shell 类 → selector 返回 null → 官方面板。
+  ctx.slots.inject('conversation.composer', () =>
+    ctx.slots.register(
+      {
+        name: 'conversation.composer',
+        id: 'dsh-develop-ui.cmd-whitelist',
+        select: selectShellApproval,
+      },
+      WhitelistEntry,
     ),
   );
 }

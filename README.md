@@ -10,6 +10,8 @@ DSH（DeepSeek Harness）一体化开发视图插件：**文件树 + 文件编�
 | 文件查看 | 文本/代码查看；**md 源码⇄渲染预览**（代码块高亮）；**代码文件源码⇄高亮**（shiki）；**图片预览** |
 | 编辑保存 | textarea 编辑、● 未保存标记、Ctrl+S 落盘、**版本守卫**（冲突 409 提示 + 重新加载）、大文件拦截（>1MB） |
 | 对话引用 | composer **@文件**（整文件引用）、**片段级引用**（选中文本发送给 agent） |
+| 终端面板 | 底部多 tab 内嵌终端（`@xterm/xterm` + node-pty 真 shell：PowerShell / cmd / Git Bash），长轮询输出、高度拖拽记忆、右键复制/粘贴、按工作区隔离 |
+| 命令白名单 | shell 命令审批**三键**（拒绝 / 允许一次 / 永远允许，永远允许可选粒度：命令名 / 子命令前缀 / 整行精确）；白名单命中自动放行不弹窗；⚙ 管理浮层增删查（localStorage 持久） |
 | 扩展 | 侧栏 📁 开关、overlay 面板（可折叠）、错误/空/加载状态 |
 
 ## 形态
@@ -19,25 +21,113 @@ DSH **profile bundle 插件**（Cordis 双半，社区标准）：
 - **host 半**（`src/host/` → `lib/index.js`）：文件系统（`ctx.fs` 版本守卫原子写）、md 渲染（markdown-it + 任务列表）、代码高亮（shiki）；经 **`ctx.webServer` HTTP 路由**（`/api/dsh-develop-ui/*`）暴露给浏览器半（含本机端口校验）
 - **client 半**（`src/client/` → `lib/client.js`）：`__ModuleLoader__` lazy-CJS 格式 React UI；经 fetch 调 host 路由；三个槽位：sidebar.footer.action（📁）、shell.overlay（面板）、conversation.input.left（@文件）
 
-## 安装（手动，DSH Desktop）
+## 安装（手动本地安装，DSH Desktop）
+
+> 以下为经真机验证的完整流程（约 2 分钟），来源：`docs/开发记录/M0-真机安装验证.md`。
+
+### 前置条件
+
+- Node.js `^22.19.0 || >=24.0.0`（见 `package.json engines`）
+- DSH Desktop 已安装并**至少启动过一次**（确保 `C:\Users\User\.dsh\profiles\desktop` 已生成）
+- 插件源码目录：`E:\trae-file\deepseek-harness-client`
+
+### ① 构建
 
 ```powershell
-# ① 打包
-pnpm pack                                    # → dsh-develop-ui-0.1.2.tgz
-
-# ② 安装到 desktop profile
-cd C:\Users\User\.dsh\profiles\desktop
-pnpm add "E:\...\dsh-develop-ui-0.1.2.tgz"
-
-# ③ 编辑 C:\Users\User\.dsh\profiles\desktop\package.json：
-#    dsh.profile.bundles 追加 "dsh-develop-ui"
-
-# ④ 重启 DSH Desktop
+cd E:\trae-file\deepseek-harness-client
+node build.mjs && tsc --emitDeclarationOnly   # 产出 lib/index.js（host）、lib/client.js（client）、lib/types
 ```
 
-> 启用/禁用/卸载直接用市场或设置 UI 操作即可，无需改任何配置文件：禁用官方
+> 环境备注（Windows + DSH Desktop）：PATH 中 `pnpm` 是 DSH 内置包装器，`pnpm run` 嵌套
+> spawn 会被拦截——构建用 `node build.mjs` 直跑；esbuild 在文件沙箱内 spawn 被拦截，
+> **构建需在真实终端 / 完整权限下执行**（详见 `docs/开发记录/初始化记录.md`）。
+
+### ② 打包
+
+```powershell
+pnpm pack                                     # → dsh-develop-ui-<version>.tgz（当前 0.1.2）
+```
+
+打包前可用 `tar -tzf dsh-develop-ui-<version>.tgz` 自检，期望内容含
+`package/lib/index.js`、`package/lib/client.js`、`package/cordis.patch.yml`、`package/package.json`、`package/lib/types/*`、`README.md`。
+
+### ③ 安装到 desktop profile
+
+```powershell
+cd C:\Users\User\.dsh\profiles\desktop
+pnpm add "E:\trae-file\deepseek-harness-client\dsh-develop-ui-0.1.2.tgz"
+```
+
+> profile 为 `nodeLinker: hoisted` + `autoInstallPeers: false`：插件 peerDeps
+> （react、`@deepseek-ai/*`）已由 DSH 运行时提供，无需重复安装；dependencies
+> （markdown-it、shiki、`@xterm/xterm`、monaco-editor、node-pty）由 `pnpm add` 自动装入。
+
+### ④ 注册 bundle
+
+编辑 `C:\Users\User\.dsh\profiles\desktop\package.json`，把插件名追加进
+`dsh.profile.bundles`：
+
+```json
+"dsh": {
+  "profile": {
+    "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-develop-ui"]
+  }
+}
+```
+
+### ⑤ 重启并验证
+
+```powershell
+# 完全退出 DSH Desktop 后重新启动（重启会中断当前会话——请先保存/确认）
+
+# a) host 半：查看当日日志
+Get-Content "C:\Users\User\AppData\Roaming\DSH Desktop\logs\dsh-$(Get-Date -Format 'yyyy-MM-dd').log" -Tail 50
+#    期望无：bundle 加载失败 / MissingClientBundleError
+
+# b) client bundle 可达（端口取 DSH Web GUI 实际监听端口）
+Invoke-WebRequest -Uri "http://127.0.0.1:<端口>/plugins/dsh-develop-ui/client.js" -UseBasicParsing | Select-Object StatusCode
+#    期望：200，且响应体含 window.__ModuleLoader__.load({ id: "dsh-develop-ui"
+
+# c) client 半：GUI 打开开发者工具（Ctrl+Shift+I）控制台
+#    期望出现：[dsh-develop-ui] client half loaded（如无，浏览器硬刷新 Ctrl+Shift+R）
+```
+
+### ⑥ 开发迭代循环（改代码 → 重装）
+
+```powershell
+# 改源码后：node build.mjs && tsc --emitDeclarationOnly → pnpm pack（版本可不变）
+
+cd C:\Users\User\.dsh\profiles\desktop
+pnpm remove dsh-develop-ui
+pnpm add "E:\trae-file\deepseek-harness-client\dsh-develop-ui-0.1.2.tgz"
+# 重启 DSH Desktop
+```
+
+### 升级 / 卸载 / 回滚
+
+```powershell
+cd C:\Users\User\.dsh\profiles\desktop
+
+# 升级：重新 pack 后 remove + add（或 pnpm add "….tgz" --force）
+# 卸载 / 回滚：
+pnpm remove dsh-develop-ui
+# 编辑 package.json：从 dsh.profile.bundles 移除 "dsh-develop-ui"
+# 重启 DSH Desktop 即恢复官方布局
+```
+
+> 启用/禁用/卸载也可直接用 DSH 市场或设置 UI 操作，无需改任何配置文件：禁用官方
 > `ui-layout` 的 loader patch 已内置在包内 `cordis.patch.yml`（bundle 层），插件被
 > 禁用或卸载时该层整层跳过，官方布局自动恢复。
+
+### 常见问题
+
+| 现象 | 原因与处理 |
+|------|-----------|
+| `client bundle not found` | `lib/client.js` 缺失：重跑构建后重新 `pnpm pack` |
+| 端口 404 | GUI 端口动态分配：`netstat -ano \| Select-String LISTENING` 取实际端口（本机曾见 54179/49606/54262/58493） |
+| GUI 无 client 日志 | 浏览器需硬刷新（Ctrl+Shift+R）；或 `dsh.client.inject` 依赖图未满足 |
+| 启动报 `service "X" has been registered` | apply 里显式 `ctx.provide` 同名服务导致双重注册冲突：只 `new XxxService(ctx)`，不显式 provide（见 `tests/repro/double-load.test.mjs`） |
+| 构建/测试命令被沙箱拦截 | esbuild spawn 在文件沙箱内被拦截：需完整权限或真实终端执行 |
 
 ## 发布到 npm
 

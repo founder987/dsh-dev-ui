@@ -2,7 +2,7 @@
  * fs-service 单元测试：隐藏目录过滤（HIDDEN_DIR_NAMES）
  * 运行：node tests/unit/fs-service.test.mjs（需先 pnpm build 产出 lib/fs-service.js）
  */
-import { listDir } from '../../lib/fs-service.js';
+import { listDir, stat } from '../../lib/fs-service.js';
 import assert from 'node:assert/strict';
 
 /** mock ctx.fs（仅 listDir 路径） */
@@ -51,5 +51,28 @@ assert.ok(r1.find((e) => e.name === 'src')?.isDir === true, '[4] src 应为目�
 assert.ok(r1.find((e) => e.name === 'package.json')?.isDir === false, '[4] package.json 应为文件');
 passed += 1;
 console.log('  ✅ 目录/文件标志保留');
+
+// 5. stat：文件/目录/不存在（聊天内打开文件判定用）
+{
+  const fsStat = {
+    resolve: async (path) => ({ targetKey: path, displayPath: path }),
+    stat: async (t) => {
+      if (t.targetKey === 'C:/proj/src') return { version: 'v1', type: 'directory', size: 0 };
+      if (t.targetKey === 'C:/proj/package.json') return { version: 'v2', type: 'file', size: 10 };
+      return undefined;
+    },
+  };
+  const s1 = await stat(fsStat, 'C:/proj/package.json');
+  assert.equal(s1.type, 'file');
+  const s2 = await stat(fsStat, 'C:/proj/src');
+  assert.equal(s2.type, 'directory');
+  await assert.rejects(
+    () => stat(fsStat, 'C:/nope'),
+    (error) => error instanceof Error && error.code === 'FS_NOT_FOUND',
+    '不存在应抛 FS_NOT_FOUND',
+  );
+  passed += 1;
+  console.log('  ✅ stat 文件/目录/不存在');
+}
 
 console.log(`\n全部通过：${passed} 项断言`);

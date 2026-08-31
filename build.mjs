@@ -112,4 +112,21 @@ await build({
   footer: { js: clientFooter },
 });
 
+// client 半纯逻辑模块：独立产物供单元测试 import（无 __ModuleLoader__ 包装，
+// 不引用 react；@deepseek-ai/* 外部化，运行时由 node_modules 解析）
+await build({
+  ...shared,
+  platform: 'browser',
+  entryPoints: {
+    'approval/cmd-whitelist': 'src/client/approval/cmdWhitelist.ts',
+    'approval/extract': 'src/client/approval/extract.ts',
+    'fileopen/decide': 'src/client/fileopen/decide.ts',
+    'fileopen/interceptor': 'src/client/fileopen/interceptor.ts',
+  },
+  outdir: 'lib',
+  outbase: 'src/client',
+  entryNames: '[dir]/[name]',
+  external: ['@deepseek-ai/*', 'react'],
+});
+
 console.log('[build] lib/index.js + lib/client.js 构建完成');

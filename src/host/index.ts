@@ -67,6 +67,28 @@ export function apply(ctx: Context): void {
     },
   });
 
+  // 路径状态：GET /api/dsh-develop-ui/fs/stat?path=<绝对路径>（聊天内打开文件判定：文件/目录/工作区）
+  webServer.register({
+    kind: 'exact',
+    path: `${API_PREFIX}/fs/stat`,
+    handler: async (req, res) => {
+      if (!isLocalRequest(req, expectedPort)) {
+        sendJson(res, 403, { error: 'request authority rejected' });
+        return;
+      }
+      const path = queryParam(req, 'path');
+      if (path === undefined || path.length === 0) {
+        sendJson(res, 400, { error: 'missing path', code: 'invalid-request' });
+        return;
+      }
+      try {
+        sendJson(res, 200, await fsOps.stat(ctx.fs, path));
+      } catch (error) {
+        sendError(res, error);
+      }
+    },
+  });
+
   // 读取文件：GET /api/dsh-develop-ui/fs/read-text?path=<绝对路径>
   webServer.register({
     kind: 'exact',

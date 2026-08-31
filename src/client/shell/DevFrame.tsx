@@ -22,6 +22,7 @@ import { WorkbenchEditor, WorkbenchTree } from '../filetree/Workbench';
 import { TermPanel } from '../terminal/TermPanel';
 import { getTermState, subscribeTerm, togglePanel as toggleTermPanel } from '../terminal/termStore';
 import { AskFloat } from '../conversation/AskFloat';
+import { WhitelistManager } from '../approval/WhitelistManager';
 import {
   computeDevColumns,
   DETAILS_DEFAULT,
@@ -229,6 +230,22 @@ if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin
  * 终端图标：primitives 库无 terminal 字形，按官方图标规范手绘（16px 网格、currentColor、
  * evenodd 单路径、1.2px 描边视觉重量）——圆角控制台窗口 + 标题栏分割线 + `>` 提示符与 `_` 光标。
  */
+/**
+ * 白名单齿轮图标：16px 网格、currentColor、evenodd 单路径（8 齿齿轮 + 中心孔）。
+ */
+function IconGear16({ size = 16, className }: { size?: number; className?: string }): React.JSX.Element {
+  return (
+    <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M6.85 1.5h2.3l.34 1.5a4.32 4.32 0 0 1 1.03.52l1.4-.61 1.63 1.63-.61 1.4c.22.31.4.66.52 1.03l1.5.34v2.3l-1.5.34c-.12.37-.3.72-.52 1.03l.61 1.4-1.63 1.63-1.4-.61c-.31.22-.66.4-1.03.52l-.34 1.5h-2.3l-.34-1.5a4.32 4.32 0 0 1-1.03-.52l-1.4.61-1.63-1.63.61-1.4a4.32 4.32 0 0 1-.52-1.03l-1.5-.34v-2.3l1.5-.34c.12-.37.3-.72.52-1.03l-.61-1.4L3.08 3.5l1.4.61c.31-.22.66-.4 1.03-.52l.34-1.5ZM8 5.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function IconTerminalOutline16({ size = 16, className }: { size?: number; className?: string }): React.JSX.Element {
   return (
     <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -402,6 +419,8 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
   const detailsBase = useRef(0);
   const [dragging, setDragging] = useState(false);
   const onDragEnd = useCallback(() => setDragging(false), []);
+  // 命令白名单管理浮层开关（底部菜单栏 ⚙）
+  const [whitelistOpen, setWhitelistOpen] = useState(false);
 
   // 树/内容列宽持久化
   useEffect(() => {
@@ -457,6 +476,8 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
       <div className="dskDevOverlayLayer" data-shell-overlay>
         {renderSlot('shell.overlay', {})}
       </div>
+      {/* 命令白名单管理浮层（fixed 居中卡片，遮罩可点关闭） */}
+      <WhitelistManager open={whitelistOpen} onClose={() => setWhitelistOpen(false)} />
       {/* 底部通用菜单栏（全宽第二 grid 行）：三区最小化还原开关 + 终端（C8） */}
       <div className="dskDevBottomBar">
         <button
@@ -512,6 +533,18 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
           onClick={() => toggleTermPanel(termCwd)}
         >
           <IconTerminalOutline16 size={16} />
+        </button>
+        {/* 命令白名单管理入口（⚙） */}
+        <button
+          type="button"
+          className="dskDevBottomBarAction"
+          data-active={whitelistOpen || undefined}
+          aria-label="命令白名单"
+          aria-pressed={whitelistOpen}
+          title="命令白名单"
+          onClick={() => setWhitelistOpen((open) => !open)}
+        >
+          <IconGear16 size={16} />
         </button>
       </div>
       {!sidebarCollapsed && (
