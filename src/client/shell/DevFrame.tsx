@@ -1,20 +1,24 @@
 /**
- * client 半：方案 C 落地版 —— 布局提供者接管（官方 ui-layout 在 profile 层禁用）。
- * 布局（参考 demo）：sidebar(官方会话) | 文件树 | conversation(官方对话) | 文件内容 | details(官方工具详情)。
+ /**
+ * client 半：方案 C 落地版 —— 布局提供者接管（官方 ui-layout 在本 bundle patch 内禁用）。
+ * 布局（参考 demo）：sidebar(官方侧栏) | 文件树 | 文件内容 | main(官方对话/全局面板) | rightbar(官方右侧栏)。
  *
- * 与官方契约的对应（@deepseek-ai/dsh-client-ui-layout rc.7 源码）：
- * - 同名子槽声明（sidebar/conversation/details/shell.overlay）随 root 注册，
- *   官方 occupant 渲染在本框架的列里 → 工作区/对话/工具详情功能全保留；
- * - ctx.layout 服务由 index.ts 提供（LayoutController 等价面），root 条目
- *   inject 钩子把 bound actions 接线进 attachPanels，官方插件（ui-sidebar/
- *   ui-conversation）的面板切换调用不受影响；
- * - 主题 token 呈现由 index.ts 接替（ThemePresenter 等价物）；
- * - details 列 0 宽保持挂载（tool details 状态不丢）；sidebar 折叠为 56px rail；
- *   1024px 断点自动折叠 + narrowExpanded 覆盖；让渡链保 center >= 640。
- * - 主题由 ui-layout 的 ThemePresenter 负责（其 apply 照常运行，不随 root shadow 失效）。
+ * 与官方契约的对应（@deepseek-ai/dsh-client-ui-layout 0.1.5-rc.2 源码）：
+ * - root 槽子声明对齐官方 AppFrame：sidebar(single/root) / main(keyed/root) /
+ *   rightbar(single/root) / shell.overlay(list/root)；官方 occupant 渲染在本框架的列里
+ *   → 工作区/对话/右侧栏/tool details 功能全保留；
+ * - ctx.layout 服务由 index.ts 提供（官方 LayoutController 等价面：selectPanel /
+ *   beginNavigation / toggleSidebar / openRightbar / closeRightbar / dispose），
+ *   store 实例由本插件创建并交给 root 注册（官方同款接线，不依赖 inject 钩子）；
+ * - panelInfo 钩子经 ctx.slots.provideRoot 提供（官方 ui-layout 同款）——
+ *   main 槽 entryKey = activePanelId ?? 'conversation'；
+ * - 主题 token 呈现由 index.ts 接替（官方 ThemePresenter 等价物）；
+ * - 右侧栏轨道（track）由 occupant 经 ctx.layout.openRightbar 声明：无轨道时列宽 0，
+ *   occupant 自锚右缘悬浮；sidebar 折叠为 56px rail；1024px 断点自动折叠 +
+ *   narrowExpanded 覆盖；让渡链保 center >= 640。
  */
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { defineStore } from '@deepseek-ai/dsh-client-runtime/client';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { defineStore } from '@deepseek-ai/dsh-client-store';
 import { IconEditOutline16, IconFolderClose16, IconFolderOpen16, IconQueueOutline14 } from '@deepseek-ai/dsh-client-ui-primitives';
 import { isPanelOpen, setPanelOpen, subscribePanel } from '../filetree/store';
 import { getFileState, setEditorOpen, subscribeFile } from '../filetree/fileStore';
@@ -23,27 +27,24 @@ import { TermPanel } from '../terminal/TermPanel';
 import { getTermState, subscribeTerm, togglePanel as toggleTermPanel } from '../terminal/termStore';
 import { AskFloat } from '../conversation/AskFloat';
 import { WhitelistManager } from '../approval/WhitelistManager';
-import {
-  computeDevColumns,
-  DETAILS_DEFAULT,
-  DETAILS_MAX,
-  DETAILS_MIN,
-  EDITOR_MAX,
-  EDITOR_MIN,
-  TREE_DEFAULT,
-  TREE_MAX,
-  TREE_MIN,
-} from './devColumns';
+import { computeDevColumns, EDITOR_MAX, EDITOR_MIN, TREE_DEFAULT, TREE_MAX, TREE_MIN } from './devColumns';
 
 /** 上次工作区路径（与 WorkbenchTree 同源：session cwd → recentWorkspace → localStorage 回退） */
 const ROOT_PATH_KEY = 'dsh-develop-ui.rootPath';
 
-/* ── 列宽契约（sidebar 对齐官方 columns.ts；树/内容/详情/中心约束见 devColumns.ts） ── */
+/* ── 列宽契约（sidebar/rightbar 对齐官方 columns.ts 0.1.5-rc.2；树/内容/中心约束见 devColumns.ts） ── */
 const SIDEBAR_MIN = 264;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 280;
 const SIDEBAR_COLLAPSED = 56;
 const SIDEBAR_AUTO_COLLAPSE = 1024;
+const RIGHTBAR_MIN = 300;
+/** 右侧栏正常宽上限（占框架宽比例）——官方 columns.ts 同值 */
+const RIGHTBAR_MAX_RATIO = 0.7;
+/** 右侧栏首次展开偏好宽（占框架宽比例）——官方 stores.ts 同值 */
+const RIGHTBAR_DEFAULT_RATIO = 0.45;
+/** 官方 computeColumns 为侧栏+右侧栏之外保留的中心最小带（px） */
+const CENTER_KEEP = 400;
 
 const TREE_WIDTH_KEY = 'dsh-develop-ui.treeWidth';
 const EDITOR_WIDTH_KEY = 'dsh-develop-ui.editorWidth';
@@ -65,25 +66,76 @@ function readWidth(key: string, fallback: number, min: number, max: number): num
   }
 }
 
-/* ── 布局 store（官方动作集 + 树/内容列宽；index.ts 注册时接线 ctx.layout） ── */
+/**
+ * 右侧栏“正常宽”求解（自官方 columns.ts computeColumns 的 rightbar 分支）：
+ * 侧栏与中心保留带挤不下的位置返回 0；否则钳制在 [300, viewport*0.7]。
+ * 该宽是 occupant 绘制面板的基准宽——它不随轨道（track）开关变化。
+ */
+function solveRightbarNormal(viewport: number, sidebar: number, preference: number): number {
+  const available = viewport - sidebar - CENTER_KEEP;
+  if (preference === 0 || available < RIGHTBAR_MIN) return 0;
+  return Math.min(available, clampWidth(preference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO));
+}
+
+/* ── 布局 store（官方 actions 全集 + 树/内容列宽；index.ts 注册时接线 ctx.layout） ── */
 export interface DevLayoutState {
-  sidebar: number;
-  details: number;
-  narrow: boolean;
-  narrowExpanded: boolean;
+  /** 官方面板选择态：null = 会话主面板，字符串 = 全局面板 id（root 槽 main 的 entryKey） */
+  panelInfo: { activePanelId: string | null };
+  /** 官方框架测量与呈现态（与 rc.2 官方 stores.ts 同形） */
+  layoutInfo: {
+    sidebar: number;
+    viewportWidth: number;
+    narrowExpanded: boolean;
+    rightbar: number | null;
+    rightbarShown: boolean;
+    rightbarTrack: boolean;
+    rightbarFullscreen: boolean;
+    rightbarInstant: boolean;
+  };
   tree: number;
   editor: number;
   /** 聊天区展开（C8：false = center 列 0 宽保挂载，会话状态保留；会话内保持不持久化） */
   chat: boolean;
 }
 
+/** store 实例的绑定动作面（官方 LayoutController 消费 + 本框架列宽动作） */
+export interface DevLayoutActions {
+  selectPanel: (panelId: string | null) => void;
+  retainMainPanels: (panelIds: string[]) => void;
+  setSidebar: (px: number) => void;
+  toggleSidebar: () => void;
+  setViewportWidth: (width: number) => void;
+  setRightbar: (px: number) => void;
+  openRightbar: (track: boolean, fullscreen: boolean) => void;
+  closeRightbar: () => void;
+  setTree: (px: number) => void;
+  setEditor: (px: number) => void;
+  toggleChat: () => void;
+}
+
+/** 注册进 root 槽的 store 席位：handle + 固定实例（官方 ui-layout 同款接线） */
+export interface DevLayoutSeat {
+  create: () => {
+    actions: DevLayoutActions;
+    getSnapshot: () => DevLayoutState;
+    subscribe: (listener: () => void) => () => void;
+  };
+}
+
 export function createDevLayoutStore(): unknown {
   return defineStore({
     init: (): DevLayoutState => ({
-      sidebar: SIDEBAR_DEFAULT,
-      details: 0,
-      narrow: false,
-      narrowExpanded: false,
+      panelInfo: { activePanelId: null },
+      layoutInfo: {
+        sidebar: SIDEBAR_DEFAULT,
+        viewportWidth: window.innerWidth,
+        narrowExpanded: false,
+        rightbar: null,
+        rightbarShown: false,
+        rightbarTrack: false,
+        rightbarFullscreen: false,
+        rightbarInstant: false,
+      },
       tree: readWidth(TREE_WIDTH_KEY, TREE_DEFAULT, TREE_MIN, TREE_MAX),
       editor: readWidth(
         EDITOR_WIDTH_KEY,
@@ -94,26 +146,66 @@ export function createDevLayoutStore(): unknown {
       chat: true,
     }),
     actions: {
-      setSidebar: (d: DevLayoutState, px: number) => {
-        d.sidebar = clampWidth(px, SIDEBAR_MIN, SIDEBAR_MAX);
+      selectPanel: (d: DevLayoutState, panelId: string | null) => {
+        d.panelInfo.activePanelId = panelId;
       },
-      setDetails: (d: DevLayoutState, px: number) => {
-        d.details = clampWidth(px, DETAILS_MIN, DETAILS_MAX);
+      retainMainPanels: (d: DevLayoutState, panelIds: string[]) => {
+        if (d.panelInfo.activePanelId !== null && !panelIds.includes(d.panelInfo.activePanelId)) {
+          d.panelInfo.activePanelId = null;
+        }
+      },
+      setSidebar: (d: DevLayoutState, px: number) => {
+        d.layoutInfo.rightbarInstant = false;
+        d.layoutInfo.sidebar = clampWidth(px, SIDEBAR_MIN, SIDEBAR_MAX);
       },
       toggleSidebar: (d: DevLayoutState) => {
-        if (d.narrow) d.narrowExpanded = !d.narrowExpanded;
-        else d.sidebar = d.sidebar === 0 ? SIDEBAR_DEFAULT : 0;
+        d.layoutInfo.rightbarInstant = false;
+        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) {
+          d.layoutInfo.narrowExpanded = !d.layoutInfo.narrowExpanded;
+        } else {
+          d.layoutInfo.sidebar = d.layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : 0;
+        }
       },
-      setNarrow: (d: DevLayoutState, narrow: boolean) => {
-        if (d.narrow === narrow) return;
-        d.narrow = narrow;
-        d.narrowExpanded = false;
+      setViewportWidth: (d: DevLayoutState, width: number) => {
+        if (d.layoutInfo.viewportWidth === width) return;
+        d.layoutInfo.rightbarInstant = false;
+        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE !== width < SIDEBAR_AUTO_COLLAPSE) {
+          d.layoutInfo.narrowExpanded = false;
+        }
+        d.layoutInfo.viewportWidth = width;
       },
-      openDetails: (d: DevLayoutState) => {
-        if (d.details === 0) d.details = DETAILS_DEFAULT;
+      setRightbar: (d: DevLayoutState, px: number) => {
+        d.layoutInfo.rightbarInstant = false;
+        d.layoutInfo.rightbar = clampWidth(
+          px,
+          RIGHTBAR_MIN,
+          Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO),
+        );
       },
-      closeDetails: (d: DevLayoutState) => {
-        d.details = 0;
+      openRightbar: (d: DevLayoutState, track: boolean, fullscreen: boolean) => {
+        if (
+          !d.layoutInfo.rightbarShown ||
+          d.layoutInfo.rightbarTrack !== track ||
+          d.layoutInfo.rightbarFullscreen !== fullscreen
+        ) {
+          d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen;
+        }
+        if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) {
+          d.layoutInfo.narrowExpanded = false;
+        }
+        d.layoutInfo.rightbar ??= Math.max(
+          RIGHTBAR_MIN,
+          Math.round(d.layoutInfo.viewportWidth * RIGHTBAR_DEFAULT_RATIO),
+        );
+        d.layoutInfo.rightbarShown = true;
+        d.layoutInfo.rightbarTrack = track;
+        d.layoutInfo.rightbarFullscreen = fullscreen;
+      },
+      closeRightbar: (d: DevLayoutState) => {
+        if (d.layoutInfo.rightbarShown) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen;
+        d.layoutInfo.rightbarShown = false;
+        d.layoutInfo.rightbarTrack = false;
+        d.layoutInfo.rightbarFullscreen = false;
       },
       setTree: (d: DevLayoutState, px: number) => {
         d.tree = clampWidth(px, TREE_MIN, TREE_MAX);
@@ -139,8 +231,8 @@ const FRAME_CSS = `
 .dskDevCenterCol{position:relative;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .dskDevEditorCol{position:relative;background:var(--dsw-specific-sidebar-fill,#1e1f24);border-right:1px solid var(--dsw-alias-border-l1,#333);min-width:0;overflow:hidden;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e8ec)}
 .dskDevFrame[data-editor-collapsed] .dskDevEditorCol{border-right:none}
-.dskDevDetailsCol{border-left:1px solid var(--dsw-alias-border-l2);min-width:0;overflow:hidden}
-.dskDevFrame[data-details-collapsed] .dskDevDetailsCol{border-left:none}
+.dskDevRightbarCol{min-width:0;position:relative;overflow:visible}
+.dskDevFrame[data-rightbar-fullscreen],.dskDevFrame[data-rightbar-instant],.dskDevFrame[data-rightbar-fullscreen] .dskDevHandle,.dskDevFrame[data-rightbar-instant] .dskDevHandle{transition:none}
 .dskDevOverlayLayer{z-index:20;pointer-events:none;position:absolute;inset:0}
 .dskDevOverlayLayer>*{pointer-events:auto}
 .dskDevBottomBar{grid-row:3;grid-column:2/-1;display:flex;align-items:center;gap:4px;padding:2px 8px;height:32px;box-sizing:border-box;background:var(--dsw-specific-sidebar-fill,#1e1f24);border-top:1px solid var(--dsw-alias-border-l1,#333);color:var(--dsw-alias-label-primary,#e8e8ec);flex:none;min-width:0;overflow:hidden}
@@ -322,41 +414,30 @@ interface SessionListStateLike {
   byId?: Record<string, { blank?: boolean; cwd?: string }>;
 }
 
-/** root 入口四份框架 props 面的最小契约（框架保证提供；此处结构化声明） */
+/** root 入口框架 props 面的最小契约（框架保证提供；此处结构化声明） */
 interface DevFrameProps {
   useStore: <T>(selector: (state: DevLayoutState) => T) => T;
   useSessions: <T>(selector: (state: SessionListStateLike) => T) => T;
   useWorkspaces: <T>(selector: (state: unknown) => T) => T;
-  actions: {
-    setSidebar: (px: number) => void;
-    setDetails: (px: number) => void;
-    toggleSidebar: () => void;
-    setNarrow: (narrow: boolean) => void;
-    openDetails: () => void;
-    closeDetails: () => void;
-    setTree: (px: number) => void;
-    setEditor: (px: number) => void;
-    toggleChat: () => void;
-  };
-  renderSlot: (key: string, owner: Record<string, unknown>) => React.ReactNode;
+  /** 本插件经 ctx.slots.provideRoot 提供的 panelInfo 钩子（main 槽 entryKey 来源） */
+  usePanelInfo: <T>(selector: (info: { activePanelId: string | null }) => T) => T;
+  actions: DevLayoutActions;
+  renderSlot: (
+    name: string,
+    owner?: Record<string, unknown>,
+    options?: { entryKey?: string },
+  ) => React.ReactNode;
 }
 
-/** 五列开发框架（root 槽 occupant；官方 sidebar/conversation/details 照常渲染） */
-export function DevFrame({ useStore, useSessions, useWorkspaces, actions, renderSlot }: DevFrameProps): React.JSX.Element {
-  const panels = useStore((s) => s);
-  // details 列会话门禁（复制官方）：无会话或非 blank=false 会话时 details 关闭
-  const detailsSession = useSessions((s) => {
-    const current = s.current;
-    return current !== undefined && s.byId?.[current]?.blank === false ? current : undefined;
-  });
+/** 五列开发框架（root 槽 occupant；官方 sidebar/main/rightbar/shell.overlay 照常渲染） */
+export function DevFrame({ useStore, useSessions, useWorkspaces, usePanelInfo, actions, renderSlot }: DevFrameProps): React.JSX.Element {
+  const layout = useStore((s) => s.layoutInfo);
+  const treeWidth = useStore((s) => s.tree);
+  const editorWidth = useStore((s) => s.editor);
+  const chat = useStore((s) => s.chat);
+  const activePanelId = usePanelInfo((info) => info.activePanelId);
   const frameRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(() => window.innerWidth);
-  const lastSession = useRef(detailsSession);
-  useLayoutEffect(() => {
-    if (detailsSession === undefined) return;
-    if (lastSession.current !== undefined && lastSession.current !== detailsSession) actions.closeDetails();
-    lastSession.current = detailsSession;
-  }, [actions, detailsSession]);
   useEffect(() => {
     const el = frameRef.current;
     if (el === null) return;
@@ -376,8 +457,8 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
   }, []);
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE;
   useEffect(() => {
-    actions.setNarrow(narrow);
-  }, [actions, narrow]);
+    actions.setViewportWidth(viewport);
+  }, [actions, viewport]);
 
   // 树列开关（FileTreeButton / @文件 按钮驱动）；内容列随打开的文件出现，二者独立最小化
   const treeOpen = useSyncExternalStore(subscribePanel, isPanelOpen);
@@ -402,15 +483,25 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
       }
     })();
 
-  const sidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0;
+  const sidebarCollapsed = narrow ? !layout.narrowExpanded : layout.sidebar === 0;
   // C8：聊天区最小化 = center 0 宽保挂载，editor 弹性吸收余量（见 devColumns）
-  const chatOpen = panels.chat;
+  const chatOpen = chat;
+  // 右侧栏（官方 rightbar）：正常宽由官方 columns 规则解算；轨道（track）由 occupant
+  // 经 ctx.layout.openRightbar 声明——无轨道时列宽 0，occupant 自锚右缘悬浮。
+  const rightbarPreference =
+    layout.rightbar ?? Math.max(RIGHTBAR_MIN, Math.round(viewport * RIGHTBAR_DEFAULT_RATIO));
+  const sidebarWidth = sidebarCollapsed
+    ? SIDEBAR_COLLAPSED
+    : layout.sidebar === 0
+      ? SIDEBAR_DEFAULT
+      : layout.sidebar;
+  const rightbarNormal = solveRightbarNormal(viewport, sidebarWidth, rightbarPreference);
   const cols = computeDevColumns(
     viewport,
-    sidebarCollapsed ? SIDEBAR_COLLAPSED : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar,
-    treeOpen ? panels.tree : 0,
-    editorOpen ? panels.editor : 0,
-    detailsSession === undefined ? 0 : panels.details,
+    sidebarWidth,
+    treeOpen ? treeWidth : 0,
+    editorOpen ? editorWidth : 0,
+    layout.rightbarTrack ? rightbarNormal : 0,
     chatOpen,
   );
   const colsRef = useRef(cols);
@@ -418,7 +509,7 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
   const sidebarBase = useRef(0);
   const treeBase = useRef(0);
   const editorBase = useRef(0);
-  const detailsBase = useRef(0);
+  const rightbarBase = useRef(0);
   const [dragging, setDragging] = useState(false);
   const onDragEnd = useCallback(() => setDragging(false), []);
   // 命令白名单管理浮层开关（底部菜单栏 ⚙）
@@ -427,29 +518,31 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
   // 树/内容列宽持久化
   useEffect(() => {
     try {
-      window.localStorage.setItem(TREE_WIDTH_KEY, String(panels.tree));
+      window.localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth));
     } catch {
       // localStorage 不可用时忽略
     }
-  }, [panels.tree]);
+  }, [treeWidth]);
   useEffect(() => {
     try {
-      window.localStorage.setItem(EDITOR_WIDTH_KEY, String(panels.editor));
+      window.localStorage.setItem(EDITOR_WIDTH_KEY, String(editorWidth));
     } catch {
       // localStorage 不可用时忽略
     }
-  }, [panels.editor]);
+  }, [editorWidth]);
 
   return (
     <div
       ref={frameRef}
       className="dskDevFrame"
       style={{
-        // 需求：工作区 → 文件夹列表 → 文件内容 → 聊天区（对话最右，details 随工具调用在右缘展开）
+        // 需求：工作区 → 文件夹列表 → 文件内容 → 聊天区（对话在 1fr 轨，官方右侧栏贴右缘）
         gridTemplateColumns: `${cols.sidebar}px ${cols.tree}px ${cols.editor}px minmax(0, 1fr) ${cols.details}px`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-details-collapsed={cols.details === 0 || undefined}
+      data-rightbar-collapsed={cols.details === 0 || undefined}
+      data-rightbar-fullscreen={layout.rightbarFullscreen || undefined}
+      data-rightbar-instant={layout.rightbarInstant || undefined}
       data-tree-collapsed={cols.tree === 0 || undefined}
       data-editor-collapsed={cols.editor === 0 || undefined}
       data-dragging={dragging || undefined}
@@ -457,7 +550,7 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
       <div className="dskDevSidebarCol">
         {renderSlot('sidebar', { collapsed: sidebarCollapsed, width: cols.sidebar })}
       </div>
-      {/* 树列 0 宽保持挂载：目录展开状态在关闭后保留（对齐官方 details 列语义） */}
+      {/* 树列 0 宽保持挂载：目录展开状态在关闭后保留（对齐官方轨道列语义） */}
       <div className="dskDevTreeCol">
         <WorkbenchTree useWorkspaces={useWorkspaces} useSessions={useSessions} />
       </div>
@@ -466,13 +559,23 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
         {fileState.tabs.length > 0 && <WorkbenchEditor useSessions={useSessions} />}
       </div>
       {/* 聊天列 0 宽保挂载（C8）：visibility 隐藏保 DOM/会话状态，AskFloat 随列隐藏；
-          与内容列双最小化时 1fr 余量留空也不露出会话 */}
+          与内容列双最小化时 1fr 余量留空也不露出会话。
+          center = 官方 main 槽（keyed）：entryKey 由 panelInfo.activePanelId 选定
+          （null → 会话面板 'conversation'，全局面板 → 其 id）。 */}
       <div className="dskDevCenterCol" style={{ visibility: chatOpen ? undefined : 'hidden' }}>
         {/* R9 当前提问浮层（C7-1）：列内顶部 absolute；无提问时组件返回 null */}
         <AskFloat />
-        {renderSlot('conversation', {})}
+        {renderSlot('main', {}, { entryKey: activePanelId ?? 'conversation' })}
       </div>
-      <div className="dskDevDetailsCol">{renderSlot('details', {})}</div>
+      {/* 右侧栏列（官方 rightbar）：轨道宽由布局解算，occupant 自锚右缘绘制；
+          列本身 overflow:visible，无轨道时 occupant 可悬浮盖过中心列。 */}
+      <div className="dskDevRightbarCol" data-rightbar-col>
+        {renderSlot('rightbar', {
+          width: rightbarNormal,
+          viewportWidth: viewport,
+          canShow: rightbarNormal > 0,
+        })}
+      </div>
       {/* 终端面板（C5 v2）：grid-row 2 + grid-column 2/-1（sidebar 列独占全高）；0 高保挂载保会话 */}
       <TermPanel cwd={termCwd} />
       <div className="dskDevOverlayLayer" data-shell-overlay>
@@ -585,15 +688,15 @@ export function DevFrame({ useStore, useSessions, useWorkspaces, actions, render
           onEnd={onDragEnd}
         />
       )}
-      {cols.details > 0 && (
+      {layout.rightbarShown && !layout.rightbarFullscreen && cols.details > 0 && (
         <FrameDragHandle
-          side="details"
+          side="rightbar"
           left={viewport - cols.details}
           onStart={() => {
-            detailsBase.current = colsRef.current.details;
+            rightbarBase.current = rightbarNormal;
             setDragging(true);
           }}
-          onDrag={(dx) => actions.setDetails(detailsBase.current - dx)}
+          onDrag={(dx) => actions.setRightbar(rightbarBase.current - dx)}
           onEnd={onDragEnd}
         />
       )}

@@ -339,15 +339,28 @@ function verifyInstalled() {
   if (patch && !existsSync(join(installedAt, patch))) warn(`dsh.bundle.patch 指向的文件不存在: ${patch}`)
   if (!patch) fail('装入包的 package.json 缺少 dsh.bundle.patch，DSH 不会把它当 bundle 加载')
 
-  // node-pty 是原生模块：pnpm 默认拦截其构建脚本，未编译则终端面板不可用
+  // node-pty 是原生模块：pnpm 默认拦截其构建脚本，未编译则终端面板不可用。
+  // node-pty 的 loadNativeModule 依次看 build/Release → build/Debug → prebuilds/<platform>-<arch>；
+  // 且 win32 加载 conpty / conpty_console_list，POSIX 加载 pty（2026-09-16：原先只看
+  // build/Release/pty.node，在 win32 会误报“终端不可用”）。
   if (installedPkg.dependencies?.['node-pty']) {
-    const binding = join(profileDir, 'node_modules', 'node-pty', 'build', 'Release', 'pty.node')
-    if (!existsSync(binding)) {
-      warn('node-pty 原生模块未编译（pnpm 拦截了构建脚本）：终端面板会不可用。'
+    const nodePtyDir = join(profileDir, 'node_modules', 'node-pty')
+    const nativeDirs = [
+      join(nodePtyDir, 'build', 'Release'),
+      join(nodePtyDir, 'build', 'Debug'),
+      join(nodePtyDir, 'prebuilds', `${process.platform}-${process.arch}`),
+    ]
+    const nativeNames = process.platform === 'win32' ? ['conpty', 'conpty_console_list'] : ['pty']
+    const missing = nativeNames.filter(
+      (name) => !nativeDirs.some((dir) => existsSync(join(dir, `${name}.node`))),
+    )
+    if (missing.length > 0) {
+      warn(`node-pty 原生模块缺失（${missing.join(', ')}）：终端面板会不可用。`
         + `\n         处理：cd "${profileDir}" 后执行 pnpm approve-builds（勾选 node-pty）再重跑本脚本，`
         + '\n         或让 profile 的 pnpm-workspace.yaml 含 onlyBuiltDependencies: [node-pty]。')
     } else {
-      ok('node-pty 原生模块已编译（终端面板可用）')
+      const built = existsSync(join(nativeDirs[0], `${nativeNames[0]}.node`))
+      ok(`node-pty 原生模块可用（${built ? '本地构建产物' : '预编译产物'}：${nativeNames.join(', ')}）`)
     }
   }
   return installedVersion

@@ -23,7 +23,7 @@
  * 变更 C3：文件列表开关按钮不再注册 sidebar.footer.action，改由 DevFrame
  * 底部通用菜单栏直接渲染（见 DevFrame.tsx dskDevBottomBar）。
  */
-import { DevFrame, createDevLayoutStore } from './shell/DevFrame';
+import { DevFrame, createDevLayoutStore, type DevLayoutActions, type DevLayoutSeat } from './shell/DevFrame';
 import { ThemePresenter } from './shell/theme';
 import { FileRefButton } from './conversation/FileRefButton';
 import { HistoryRecall } from './conversation/HistoryRecall';
@@ -43,7 +43,15 @@ type ThemeSnapshot = {
 type ClientCtx = {
   slots: {
     inject: (name: string, register: () => unknown) => () => void;
-    register: (options: unknown, component: unknown) => unknown;
+    register: (options: unknown, component: unknown) => () => void;
+    /** 提供 root 级钩子（官方 ui-layout 同款：panelInfo 供 usePanelInfo 消费） */
+    provideRoot: (options: {
+      hooks: Record<string, { getSnapshot: () => unknown; subscribe: (listener: () => void) => () => void }>;
+    }) => () => void;
+    /** 订阅某槽条目变化（main 面板集合保留判定用） */
+    subscribe: (name: string, listener: () => void) => () => void;
+    /** 某槽当前条目（keyed 槽的 key 在 options.key） */
+    entries: (name: string) => Array<{ options: { key?: string } }>;
   };
   /** cordis 内置：向 ctx 提供服务（插件间通过 inject 声明消费） */
   reflect: {
@@ -55,7 +63,7 @@ type ClientCtx = {
   };
   /** 官方 runtime 提供的会话运行时（C7 提问浮层/历史回显数据源；缺失时降级） */
   sessions?: SessionsLike;
-  /** 官方 runtime 提供的工作区服务（聊天内打开文件拦截 openPath 用） */
+  /** 官方 workspace controller 提供的工作区服务（聊天内打开文件拦截 openPath 用） */
   workspaces: {
     openPath: (path: string) => Promise<void>;
   };
@@ -66,25 +74,53 @@ type ClientCtx = {
 /** client 半 host 路由前缀（与 src/host/index.ts 的 API_PREFIX 同源） */
 const API_PREFIX = '/api/dsh-develop-ui';
 
-/** 跨插件面板动作面（复制官方 LayoutController 契约，官方条目照常调用）。 */
+/**
+ * 跨插件面板动作面（复制官方 0.1.5-rc.2 LayoutController 契约：官方条目 ctx.layout 调用照常）。
+ * 面板选择还带官方同款的 main 面板存在性校验与导航取消信号。
+ */
 class DevLayoutController {
-  private panels: unknown;
-  /** 采纳 root 条目 store 的 bound actions（root 条目 inject 钩子接线）。 */
-  attachPanels(actions: unknown): void {
-    this.panels = actions;
+  private panels: DevLayoutActions;
+  private hasMainPanel: (id: string) => boolean;
+  private navigation = new AbortController();
+
+  constructor(panels: DevLayoutActions, hasMainPanel: (id: string) => boolean) {
+    this.panels = panels;
+    this.hasMainPanel = hasMainPanel;
   }
+
+  /** 选择全局面板或回到会话面板（null） */
+  selectPanel(panelId: string | null): void {
+    if (panelId !== null && !this.hasMainPanel(panelId)) {
+      throw new Error(`layout.selectPanel: main panel "${panelId}" is not registered`);
+    }
+    this.navigation.abort();
+    this.panels.selectPanel(panelId);
+  }
+
+  /** 开始一次导航：返回本次导航的取消信号（上一次导航随之取消） */
+  beginNavigation(): AbortSignal {
+    this.navigation.abort();
+    this.navigation = new AbortController();
+    return this.navigation.signal;
+  }
+
+  /** 布局提供者卸载时取消未完成的导航 */
+  dispose(): void {
+    this.navigation.abort();
+  }
+
   toggleSidebar(): void {
-    this.require().toggleSidebar();
+    this.panels.toggleSidebar();
   }
-  openDetails(): void {
-    this.require().openDetails();
+
+  /** 右侧栏 occupant 上报呈现态：轨道 / 全屏 */
+  openRightbar(track: boolean, fullscreen: boolean): void {
+    this.panels.openRightbar(track, fullscreen);
   }
-  closeDetails(): void {
-    this.require().closeDetails();
-  }
-  private require(): { toggleSidebar: () => void; openDetails: () => void; closeDetails: () => void } {
-    if (this.panels === undefined) throw new Error('layout: panel actions not wired (root entry not mounted)');
-    return this.panels as { toggleSidebar: () => void; openDetails: () => void; closeDetails: () => void };
+
+  /** 右侧栏 occupant 上报隐藏：无轨道、无拖拽手柄 */
+  closeRightbar(): void {
+    this.panels.closeRightbar();
   }
 }
 
@@ -100,38 +136,70 @@ export function apply(ctx: ClientCtx): void {
   console.log('[dsh-develop-ui] client half loaded (layout provider)');
 
   // 布局提供者装配：ctx.layout 服务 + root 五列框架，随本 fiber 生命周期释放
-  //（镜像官方 ui-layout 的 effect 包裹模式）。
+  //（镜像官方 ui-layout 的 effect 包裹模式：store 实例由本插件创建并交给注册席位）。
   ctx.effect(() => {
-    // 1) 提供 ctx.layout（官方 ui-layout 已禁用，缺了这个官方条目调用会抛错）
-    const layout = new DevLayoutController();
-    const disposeService = ctx.reflect.provide('layout', layout);
+    // 1) store 实例（官方同款：handle.create() 单例在注册席位与 ctx.layout 间共享）
+    const handle = createDevLayoutStore() as DevLayoutSeat & {
+      spec: unknown;
+      create: () => {
+        actions: DevLayoutActions;
+        getSnapshot: () => { panelInfo: { activePanelId: string | null } };
+        subscribe: (listener: () => void) => () => void;
+      };
+    };
+    const instance = handle.create();
 
-    // 2) root 槽五列框架（官方 ui-layout 禁用后，子槽声明无冲突）
-    const disposeRegistration = ctx.slots.inject('root', () =>
-      ctx.slots.register(
-        {
-          name: 'root',
-          id: 'dsh-develop-ui.root',
-          children: {
-            sidebar: { kind: 'single', scope: 'root' },
-            conversation: { kind: 'single', scope: 'session-maybe' },
-            details: { kind: 'single', scope: 'session' },
-            'shell.overlay': { kind: 'list', scope: 'root' },
-          },
-          store: createDevLayoutStore,
-          inject: (actions: unknown) => {
-            // 官方插件经 ctx.layout 触发的面板切换（侧栏/详情）落到本框架 store
-            layout.attachPanels(actions);
-            return {};
-          },
-        },
-        DevFrame,
-      ),
+    // 2) ctx.layout（官方 LayoutController 等价面；main 面板存在性取自 main 槽条目）
+    const layout = new DevLayoutController(instance.actions, (id) =>
+      ctx.slots.entries('main').some((entry) => entry.options.key === id),
     );
 
+    // 3) panelInfo 钩子（官方 ui-layout 同款）：框架据此向 occupant 发 usePanelInfo，
+    //    本框架用它选 main 槽 entryKey。
+    const disposePanelInfo = ctx.slots.provideRoot({
+      hooks: {
+        panelInfo: {
+          getSnapshot: () => instance.getSnapshot().panelInfo,
+          subscribe: (listener) => instance.subscribe(listener),
+        },
+      },
+    });
+
+    // 4) 提供 ctx.layout 服务（官方 ui-layout 已禁用，缺了这个官方条目调用会抛错）
+    const disposeService = ctx.reflect.provide('layout', layout);
+
+    // 5) root 槽五列框架（子声明对齐官方 0.1.5-rc.2 AppFrame）
+    const disposeRegistration = ctx.slots.register(
+      {
+        name: 'root',
+        children: {
+          sidebar: { kind: 'single', scope: 'root' },
+          main: { kind: 'keyed', scope: 'root' },
+          rightbar: { kind: 'single', scope: 'root' },
+          'shell.overlay': { kind: 'list', scope: 'root' },
+        },
+        store: { ...handle, create: () => instance },
+      },
+      DevFrame,
+    );
+
+    // 6) main 槽条目保留判定（官方同款）：面板卸载后清空悬空的 activePanelId
+    const retainMainPanels = (): void => {
+      instance.actions.retainMainPanels(
+        ctx.slots
+          .entries('main')
+          .flatMap((entry) => (typeof entry.options.key === 'string' ? [entry.options.key] : [])),
+      );
+    };
+    const disposePanels = ctx.slots.subscribe('main', retainMainPanels);
+    retainMainPanels();
+
     return () => {
+      disposePanels();
       disposeRegistration();
       disposeService();
+      disposePanelInfo();
+      layout.dispose();
     };
   }, 'dsh-develop-ui: layout service + root registration');
 

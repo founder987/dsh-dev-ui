@@ -19,7 +19,7 @@ DSH（DeepSeek Harness）一体化开发视图插件：**文件树 + 文件编�
 DSH **profile bundle 插件**（Cordis 双半，社区标准）：
 
 - **host 半**（`src/host/` → `lib/index.js`）：文件系统（`ctx.fs` 版本守卫原子写）、md 渲染（markdown-it + 任务列表）、代码高亮（shiki）；经 **`ctx.webServer` HTTP 路由**（`/api/dsh-develop-ui/*`）暴露给浏览器半（含本机端口校验）
-- **client 半**（`src/client/` → `lib/client.js`）：`__ModuleLoader__` lazy-CJS 格式 React UI；经 fetch 调 host 路由；三个槽位：sidebar.footer.action（📁）、shell.overlay（面板）、conversation.input.left（@文件）
+- **client 半**（`src/client/` → `lib/client.js`）：`__ModuleLoader__` lazy-CJS 格式 React UI；只 require 宿主模块表暴露的模块（platform seed：`react`/`react-dom`/`@deepseek-ai/dsh-client-store`/`@deepseek-ai/dsh-client-ui-primitives` 等，见 `specs/开发规范.md` §4.4）；经 fetch 调 host 路由；槽位：root（五列框架）、conversation.input.left（@文件 + 历史回显）、conversation.composer（命令白名单）、shell.overlay（浮层）
 
 ## 安装（手动本地安装，DSH Desktop）
 
@@ -40,7 +40,7 @@ node scripts/install-plugin.mjs              # 装本地已构建的 tarball；�
 | `--from local` | 强制重新 `node build.mjs && tsc --emitDeclarationOnly` + `pnpm pack` 后装本地 tarball |
 | `--from npm` | 装 npm 上的已发布版本（不构建） |
 | `--version 0.1.5` | 指定 npm 版本（隐含 `--from npm`） |
-| `--force` | 先 `pnpm remove` 再装，清掉旧版残留 |
+| `--force` | 先 `pnpm remove` 再装，清掉旧版残留（**同一版本号重装必须加**：否则 pnpm 会复用缓存里的旧 tarball 内容） |
 | `--dry-run` | 只打印将执行的动作，不落盘 |
 | `--uninstall` | 卸载：移除插件包 + `dependencies` + `bundles` 注册 |
 | `--profile "D:\path\profiles\desktop"` | 指定其他 profile 目录 |
@@ -70,7 +70,7 @@ node build.mjs && tsc --emitDeclarationOnly   # 产出 lib/index.js（host）、
 ### ② 打包
 
 ```powershell
-pnpm pack                                     # → dsh-develop-ui-<version>.tgz（随 package.json 版本，当前 0.1.5）
+pnpm pack                                     # → dsh-develop-ui-<version>.tgz（随 package.json 版本，当前 0.1.6）
 ```
 
 打包前可用 `tar -tzf dsh-develop-ui-<version>.tgz` 自检，期望内容含
@@ -206,8 +206,10 @@ pnpm typecheck      # 类型检查（tsc --noEmit）
 node tests/unit/markdown.test.mjs
 node tests/unit/fs-service.test.mjs
 node tests/unit/highlight.test.mjs
-node tests/integration/client-bundle-format.test.mjs   # client bundle 冒烟
-node tests/repro/double-load.test.mjs                  # host 加载回归
+node tests/integration/client-bundle-format.test.mjs   # client bundle 冒烟 + 外部模块面白名单
+node tests/repro/double-load.test.mjs                  # host 加载回归（需测试行自带 inject，当前未同步）
+# 隔离环境跑真宿主 + 无头 Chrome 探针（验证 client 半能在真模块表里激活；用法见脚本头注释）：
+node scripts/probe-client-boot.mjs "http://127.0.0.1:<web 端口>/?token=<token>"
 # 安装/卸载插件到 DSH Desktop profile（详见「安装」章节）：
 node scripts/install-plugin.mjs --dry-run              # 预览将执行的动作
 node scripts/install-plugin.mjs --from local           # 重建打包并覆盖安装
@@ -223,4 +225,10 @@ node scripts/install-plugin.mjs --uninstall            # 卸载
 
 ## 依赖版本对齐
 
-与 DSH 2.0.1（`dsh-plugin-desktop`）运行时对齐：react 18.3、shiki 4.4、`@deepseek-ai/*` 0.1.0-rc.7。
+与 DSH Desktop 2.0.10（`dsh-plugin-desktop`／dsh 0.1.5-rc.2）运行时对齐：react 18.3、shiki 4.4、
+`@deepseek-ai/*` 客户端模块取宿主平台 seed 名（`dsh-client-store`／`dsh-client-ui-primitives`）。
+
+客户端半的外部模块面是**硬约束**：`lib/client.js` 中出现宿主模块表未提供的 require，
+整个 client 半会加载失败 → 本插件提供的 `ctx.layout` 缺失 → 依赖它的官方 UI 条目全部
+pending → 桌面渲染进程启动失败。改动 client 半依赖后必须跑 `node tests/integration/client-bundle-format.test.mjs`
+断言 require 白名单（见 `docs/开发记录/DSH-2.0.10-启动失败修复.md`）。

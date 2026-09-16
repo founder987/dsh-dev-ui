@@ -5,12 +5,15 @@
  * 至各自下限，center 兜底 CENTER_MIN；
  * chat 收起（chatOpen=false）：center 0 宽保挂载，editor 弹性吸收全部剩余
  * （渲染宽 = viewport − sidebar − tree − details，下限 EDITOR_MIN；不足时先压
- * details → 0，再压 tree → TREE_MIN，最后 editor 兜底可低于 EDITOR_MIN）。
+ * details → 0，再压 tree 至 TREE_MIN，最后 editor 兜底可低于 EDITOR_MIN）。
  * editor 已关闭（输入 0）时不做弹性吸收，余量留给 grid 的 1fr center 轨
  * （内容列最小化优先，中间留空）。
+ *
+ * 注：`details` 入参自 2026-09-16 起是官方 rightbar 的**轨道宽**
+ * （track=0 时 occupant 自锚右缘悬浮，见 DevFrame 的 solveRightbarNormal）。
  */
 
-/** 列宽契约（与官方 columns.ts 及 DevFrame 对齐） */
+/** 列宽契约（sidebar 对齐官方 columns.ts；树/内容/中心约束见 devColumns.ts） */
 export const CENTER_MIN = 640;
 export const DETAILS_MIN = 300;
 export const DETAILS_MAX = 520;

@@ -5,7 +5,9 @@
  *
  * 布局提供者架构（方案 C）：apply 注册 3 个槽位 —— root（DevFrame 五列框架，
  * 官方 ui-layout 禁用后由本插件接替）与 conversation.input.left ×2（@文件 按钮 +
- * C7 ↑↓ 历史回显 null 组件）；并提供 ctx.layout 服务（reflect.provide）+
+ * C7 ↑↓ 历史回显 null 组件）；并提供 ctx.layout 服务（reflect.provide，
+ * 0.1.5-rc.2 官方 LayoutController 等价面：selectPanel/beginNavigation/toggleSidebar/
+ * openRightbar/closeRightbar）+ panelInfo 钩子（slots.provideRoot）+
  * ThemePresenter（DOM stub）。C7：exports.inject 增 'sessions'（提问数据源）。
  * C10：浮层复制按钮（dskDevAskCopy + 「已复制」反馈文案）。
  *
@@ -64,7 +66,31 @@ new Function(code)();
 if (!captured) throw new Error('FAIL: __ModuleLoader__.load 未被调用');
 console.log('[1] load called, id =', captured.id);
 
-const requireStub = (id) => ({ __stub: id });
+// 模块表 stub：只有 @deepseek-ai/dsh-client-store 需要真实现（apply 内建 store 实例）
+const storeStub = {
+  defineStore(spec) {
+    const actions = {};
+    const state = spec.init();
+    for (const key of Object.keys(spec.actions)) {
+      actions[key] = (...params) => spec.actions[key](state, ...params);
+    }
+    const listeners = new Set();
+    return {
+      spec,
+      create: () => ({
+        actions,
+        getSnapshot: () => state,
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        store: { update: (mutator) => mutator(state) },
+        clearPersisted: () => {},
+      }),
+    };
+  },
+};
+const requireStub = (id) => (id === '@deepseek-ai/dsh-client-store' ? storeStub : { __stub: id });
 const mod = captured.factory(requireStub);
 console.log('[2] factory returned, exports keys =', Object.keys(mod));
 
@@ -76,8 +102,15 @@ console.log('[2.5] exports.inject =', JSON.stringify(mod.inject));
 
 // ctx stub：inject 立即执行注册；effect 立即执行并收集 disposer
 const registered = [];
+const registrationOptions = new Map();
 const provided = [];
+const providedServices = new Map();
+const providedRootHooks = [];
 const disposers = [];
+const rootPanels = [
+  { options: { key: 'conversation' } },
+  { options: { key: 'plugin-inventory' } },
+];
 const ctxStub = {
   slots: {
     inject(name, register) {
@@ -87,13 +120,28 @@ const ctxStub = {
     },
     register(options, component) {
       registered.push(options.name);
+      registrationOptions.set(options.name, options);
       console.log(`[3] slots.register(${JSON.stringify(options.name)}) component=${typeof component}`);
       return () => {};
+    },
+    provideRoot(options) {
+      providedRootHooks.push(...Object.keys(options.hooks));
+      console.log(`[3] slots.provideRoot(hooks: ${Object.keys(options.hooks).join(',')})`);
+      return () => {};
+    },
+    subscribe(name, listener) {
+      console.log(`[3] slots.subscribe(${name})`);
+      listener();
+      return () => {};
+    },
+    entries(name) {
+      return name === 'main' ? rootPanels : [];
     },
   },
   reflect: {
     provide(name, service) {
       provided.push(name);
+      providedServices.set(name, service);
       console.log(`[3] reflect.provide(${name}) service=${typeof service}`);
       return () => {};
     },
@@ -125,6 +173,42 @@ if (!provided.includes('layout')) {
   throw new Error(`FAIL: 应提供 ctx.layout 服务（官方条目依赖），实际 ${provided.join(',')}`);
 }
 console.log('[5] ctx.layout 服务已提供（DevLayoutController）✅');
+
+// ── 0.1.5-rc.2 布局接管契约断言：root 子槽 = sidebar/main/rightbar/shell.overlay，
+//    main 为 keyed；panelInfo 钩子提供；ctx.layout 暴露官方 0.1.5-rc.2 动作面。
+//    （2026-09-16 修复：旧 sidebar/conversation/details 子槽在 0.1.5-rc.2 下使官方
+//    ui-conversation/ui-sidebar-right/… 全部 pending，渲染进程启动失败）──
+const rootOptions = registrationOptions.get('root');
+if (rootOptions === undefined) throw new Error('FAIL: root 槽未注册');
+const childNames = Object.keys(rootOptions.children ?? {}).sort();
+const expectedChildren = ['main', 'rightbar', 'shell.overlay', 'sidebar'];
+if (childNames.join(',') !== expectedChildren.join(',')) {
+  throw new Error(
+    `FAIL: root 子槽应为 ${expectedChildren.join('/')}（官方 0.1.5-rc.2 AppFrame 契约），实际 ${childNames.join('/')}`,
+  );
+}
+if (rootOptions.children.main.kind !== 'keyed' || rootOptions.children.main.scope !== 'root') {
+  throw new Error(`FAIL: main 子槽应为 keyed/root，实际 ${JSON.stringify(rootOptions.children.main)}`);
+}
+if (rootOptions.children.rightbar.kind !== 'single') {
+  throw new Error(`FAIL: rightbar 子槽应为 single，实际 ${JSON.stringify(rootOptions.children.rightbar)}`);
+}
+if (typeof rootOptions.store?.create !== 'function') {
+  throw new Error('FAIL: root 注册应带 store 席位（handle + 固定实例）');
+}
+if (!providedRootHooks.includes('panelInfo')) {
+  throw new Error(`FAIL: 应经 slots.provideRoot 提供 panelInfo 钩子，实际 ${providedRootHooks.join(',')}`);
+}
+const layoutServiceInterface = ['selectPanel', 'beginNavigation', 'dispose', 'toggleSidebar', 'openRightbar', 'closeRightbar'];
+const layoutService = providedServices.get('layout');
+for (const method of layoutServiceInterface) {
+  if (typeof layoutService?.[method] !== 'function') {
+    throw new Error(`FAIL: ctx.layout 缺 ${method}()（官方 0.1.5-rc.2 LayoutController 契约）`);
+  }
+}
+console.log(`[5.3] ctx.layout 接口齐备（${layoutServiceInterface.join('/')}）✅`);
+console.log(`[5.1] root 子槽 = ${childNames.join('/')}（main keyed/root）✅`);
+console.log('[5.2] panelInfo 钩子已提供（usePanelInfo 消费面）✅');
 
 // ── C5 终端面板断言：host 路由注册 + client 面板组件打包进 bundle ──
 const hostCode = readFileSync(join(root, 'lib', 'index.js'), 'utf8');
@@ -216,5 +300,34 @@ if (!code.includes('/system/open')) {
   throw new Error('FAIL: client bundle 缺少 systemOpen fetch 路径 /system/open（C12 未打包）');
 }
 console.log('[14] C12：树行右键菜单（资源管理器/默认应用/打开方式）已打包 ✅');
+
+// ── 客户端外部模块面断言（2026-09-16 启动失败根因防线）──
+// 模块表只回答平台 seed 名与 __DSH_BOOT__ 图内包名；出现表外的 require 时整个 client 半
+// 物化失败（apply 不执行）→ ctx.layout 缺失 → 官方布局消费方全部 pending →
+// 桌面渲染进程启动失败。新增外部依赖时必须同步此白名单（见 specs/开发规范.md §4.4）。
+const seedModules = new Set([
+  'react',
+  'react/jsx-runtime',
+  'react-dom',
+  'react-dom/client',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/dsh-client-ui-slots',
+  '@deepseek-ai/dsh-client-ui-primitives',
+  '@deepseek-ai/dsh-client-ui-dockkit',
+]);
+const graphModules = new Set(
+  JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).dsh.client.inject ?? [],
+);
+const requires = new Set([...code.matchAll(/require\((['"])([^'"]+)\1\)/g)].map((m) => m[2]));
+const offenders = [...requires].filter(
+  (id) => !seedModules.has(id) && !graphModules.has(id.replace(/\/client$/, '')),
+);
+if (offenders.length > 0) {
+  throw new Error(`FAIL: client bundle require 了宿主模块表未提供的模块：${offenders.join(', ')}`);
+}
+console.log(
+  `[15] client 外部模块面 = ${[...requires].sort().join(' + ')}（全部命中平台 seed / 图内包）✅`,
+);
 
 console.log('SMOKE PASS');
