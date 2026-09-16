@@ -185,6 +185,8 @@ const FRAME_CSS = `
 .dskDevCtxMenu button{border:none;background:transparent;color:var(--dsw-alias-label-primary,#e8e8ec);text-align:left;padding:6px 10px;font-size:12px;border-radius:6px;cursor:pointer}
 .dskDevCtxMenu button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06))}
 .dskDevCtxMenu button:disabled{opacity:.4;cursor:default}
+.dskDevCtxMenuError{color:#e66;font-size:11px;line-height:16px;padding:4px 10px;max-width:220px;word-break:break-all}
+.dskDevCtxMenuFeedback{color:var(--dsw-alias-label-tertiary,#8b8d95);font-size:11px;line-height:16px;padding:4px 10px;max-width:260px;word-break:break-all;font-family:var(--ds-font-family-code,ui-monospace,Consolas,monospace)}
 .dskDevTermPanel{grid-row:2;grid-column:2/-1;position:relative;display:flex;flex-direction:column;background:var(--dsw-specific-sidebar-fill,#1e1f24);border-top:1px solid var(--dsw-alias-border-l1,#333);min-width:0;overflow:hidden}
 .dskDevTermPanel:not([data-open]){border-top:none}
 .dskDevTermHandle{position:absolute;top:-3px;left:0;right:0;height:7px;cursor:row-resize;z-index:5;touch-action:none}

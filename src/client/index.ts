@@ -171,6 +171,10 @@ export function apply(ctx: ClientCtx): void {
   // 聊天内打开文件：包装 workspaces.openPath（唯一调用者即聊天文件打开）——
   // 工作区内文件 → DSH 窗口打开（文件树面板 + 树中定位）；目录/工作区外/失败 → 回落系统。
   ctx.effect(() => {
+    if (typeof ctx.workspaces?.openPath !== 'function') {
+      console.warn('[dsh-develop-ui] workspaces service unavailable, openPath interceptor skipped');
+      return () => {};
+    }
     const interceptor = installOpenPathInterceptor(ctx.workspaces, {
       statPath: async (path) => {
         const res = await fetch(`${API_PREFIX}/fs/stat?path=${encodeURIComponent(path)}`);

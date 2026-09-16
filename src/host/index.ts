@@ -11,6 +11,7 @@ import * as fsOps from './fs-service';
 import { renderMarkdownToHtml } from './markdown';
 import { highlightCode, highlightFile } from './highlight';
 import { TerminalService, type PtyFactory } from './terminal';
+import { resolveSystemOpenCommand, spawnDetached, logSystemOpen } from './system-open';
 import { isLocalRequest, readJson, sendJson } from './http-util';
 
 const API_PREFIX = '/api/dsh-develop-ui';
@@ -338,6 +339,53 @@ export function apply(ctx: Context): void {
         }
         termService.kill(body.id);
         sendJson(res, 200, { ok: true });
+      } catch (error) {
+        sendError(res, error);
+      }
+    },
+  });
+
+  // 系统打开：POST /api/dsh-develop-ui/system/open { path, action }
+  // action: reveal（资源管理器定位）/ open（系统默认应用，无默认应用弹选择应用）/ choose-app（打开方式对话框）
+  webServer.register({
+    kind: 'exact',
+    path: `${API_PREFIX}/system/open`,
+    handler: async (req, res) => {
+      if (req.method !== 'POST' || !isLocalRequest(req, expectedPort)) {
+        sendJson(res, 405, { error: 'system open requires a local same-origin POST', code: 'method-not-allowed' });
+        return;
+      }
+      try {
+        const body = (await readJson(req)) as { path?: unknown; action?: unknown };
+        if (
+          typeof body.path !== 'string' ||
+          body.path.length === 0 ||
+          (body.action !== 'reveal' && body.action !== 'open' && body.action !== 'choose-app')
+        ) {
+          sendJson(res, 400, { error: 'invalid body: need path + action (reveal|open|choose-app)', code: 'invalid-request' });
+          return;
+        }
+        // 存在性 + 类型校验（路径被删 → FS_NOT_FOUND → 404）
+        const info = await fsOps.stat(ctx.fs, body.path);
+        const type = info.type === 'file' ? 'file' : 'directory';
+        // 本机路径转换：DSH 内部路径（正斜杠）→ Windows 可执行路径（反斜杠），
+        // 与 terminal 的 processPath 通道一致（explorer 对正斜杠/混合分隔符可能不识别）
+        const target = await ctx.fs.resolve(body.path);
+        const nativePath = ctx.fs.processPath(target).replaceAll('/', '\\');
+        const command = resolveSystemOpenCommand(type, body.action, nativePath);
+        if (command === null) {
+          sendJson(res, 400, { error: `action ${body.action} not applicable to ${type}`, code: 'invalid-request' });
+          return;
+        }
+        const outcome = await spawnDetached(command.file, command.args);
+        const commandLine = `${command.file} ${command.args.join(' ')}`;
+        logSystemOpen(`${body.action} ${type} path=${body.path} native=${nativePath} cmd=${commandLine} result=${outcome.ok ? outcome.detail : 'FAIL ' + outcome.detail}`);
+        if (!outcome.ok) {
+          sendJson(res, 500, { error: `spawn failed: ${outcome.detail}`, code: 'SYSTEM_OPEN_SPAWN_FAILED' });
+          return;
+        }
+        console.log(`[dsh-develop-ui] system open: ${body.action} ${body.path}`);
+        sendJson(res, 200, { ok: true, command: commandLine });
       } catch (error) {
         sendError(res, error);
       }

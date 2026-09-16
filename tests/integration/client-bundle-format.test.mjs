@@ -112,12 +112,13 @@ const ctxStub = {
 };
 mod.apply(ctxStub);
 
-if (registered.length !== 3) {
-  throw new Error(`FAIL: 期望注册 3 个 slot（root + conversation.input.left ×2），实际 ${registered.length}: ${registered.join(',')}`);
+if (registered.length !== 4) {
+  throw new Error(`FAIL: 期望注册 4 个 slot（root + conversation.input.left ×2 + conversation.composer），实际 ${registered.length}: ${registered.join(',')}`);
 }
 if (!registered.includes('root') || registered.filter((n) => n === 'conversation.input.left').length !== 2) {
-  throw new Error(`FAIL: 槽位应为 root / conversation.input.left ×2，实际 ${registered.join(',')}`);
+  throw new Error(`FAIL: 槽位应为 root / conversation.input.left ×2 / conversation.composer，实际 ${registered.join(',')}`);
 }
+console.log('[3] 槽位注册：root + conversation.input.left ×2 + conversation.composer（命令白名单）✅');
 console.log(`[4] apply() 注册 ${registered.length} 个槽位（${registered.join(' + ')}）✅`);
 
 if (!provided.includes('layout')) {
@@ -197,5 +198,23 @@ if (!code.includes(esc('已复制'))) {
   throw new Error('FAIL: client bundle 缺少复制成功反馈文案「已复制」（C10 AskFloat 复制未打包）');
 }
 console.log('[12] C10：提问浮层复制按钮 + 已复制反馈已打包 ✅');
+
+// ── C12 文件系统打开断言：host system/open 路由 + client 树行右键菜单进 bundle ──
+if (!hostCode.includes('/system/open')) {
+  throw new Error('FAIL: host bundle 缺少 system/open 路由（C12 系统打开未注册）');
+}
+if (!hostCode.includes('resolveSystemOpenCommand')) {
+  throw new Error('FAIL: host bundle 缺少 resolveSystemOpenCommand（C12 动作映射未打包）');
+}
+console.log('[13] C12：host system/open 路由 + 动作映射已注册 ✅');
+for (const label of ['在资源管理器打开', '系统默认应用打开', '打开方式']) {
+  if (!code.includes(esc(label))) {
+    throw new Error(`FAIL: client bundle 缺少树行右键菜单文案「${label}」（C12 未打包）`);
+  }
+}
+if (!code.includes('/system/open')) {
+  throw new Error('FAIL: client bundle 缺少 systemOpen fetch 路径 /system/open（C12 未打包）');
+}
+console.log('[14] C12：树行右键菜单（资源管理器/默认应用/打开方式）已打包 ✅');
 
 console.log('SMOKE PASS');

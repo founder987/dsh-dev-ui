@@ -26,6 +26,7 @@ await build({
     'fs-service': 'src/host/fs-service.ts',
     highlight: 'src/host/highlight.ts',
     terminal: 'src/host/terminal.ts',
+    'system-open': 'src/host/system-open.ts',
   },
   outdir: 'lib',
   entryNames: '[name]',
@@ -107,7 +108,7 @@ await build({
   minify: true, // monaco 内核未压缩约 10MB；压缩后全量 bundle ≈ 3MB
   loader: { '.css': 'text' }, // xterm.css 以文本内联注入（保持单文件 bundle，见 TermPanel）
   plugins: [monacoCssInjectPlugin],
-  external: ['@deepseek-ai/*', 'react'],
+  external: ['@deepseek-ai/*', 'react', 'react-dom'],
   banner: { js: clientBanner },
   footer: { js: clientFooter },
 });

@@ -6,6 +6,7 @@
  * 文件状态见 fileStore.ts；面板开关/@文件 待选见 store.ts。
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import {
   callInsertRef,
   getReveal,
@@ -40,6 +41,7 @@ import {
   trustDir,
 } from './fileStore';
 import { MonacoEditorArea } from './MonacoEditorArea';
+import { systemOpen, type SystemOpenAction } from '../fileopen/systemOpen';
 
 const API = '/api/dsh-develop-ui';
 
@@ -54,6 +56,11 @@ interface TreeNode {
 function joinPath(dir: string, name: string): string {
   if (dir.endsWith('/') || dir.endsWith('\\')) return dir + name;
   return `${dir}/${name}`;
+}
+
+/** 选中态路径规范化：分隔符统一为正斜杠后比较（树路径与聊天打开路径格式可能不同）。 */
+function normalizeActivePath(path: string): string {
+  return path.replaceAll('\\', '/');
 }
 
 /** 父目录（'' = 无父目录，定位跳过） */
@@ -119,6 +126,9 @@ function DirRow({
         role="button"
         tabIndex={0}
         className="dskDevRow"
+        data-active={expanded || undefined}
+        data-path={path}
+        data-dir="true"
         onClick={() => onToggle(path)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') onToggle(path);
@@ -324,6 +334,73 @@ export function WorkbenchTree(props: WorkbenchHooks): React.JSX.Element {
     return () => window.clearTimeout(timer);
   }, [flashName]);
 
+  // 树行右键菜单（C12 文件系统打开）：fixed 锚点 + 点外/Esc 关闭；失败红字 / 成功灰字命令反馈
+  const [rowMenu, setRowMenu] = useState<{
+    path: string;
+    x: number;
+    y: number;
+    isDir: boolean;
+    error?: string;
+    feedback?: string;
+  } | null>(null);
+  useEffect(() => {
+    if (rowMenu === null) return;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.dskDevCtxMenu') == null) setRowMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRowMenu(null);
+    };
+    window.addEventListener('pointerdown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [rowMenu]);
+
+  // 行右键（原生 contextmenu 监听，不依赖 React 合成事件）：从行 dataset 读路径与类型
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const onContext = (event: MouseEvent): void => {
+      const target = event.target as HTMLElement | null;
+      const row = target?.closest('.dskDevRow') as HTMLElement | null;
+      if (row === null) return;
+      const path = row.dataset.path;
+      if (path === undefined || path.length === 0) return;
+      event.preventDefault();
+      openRowMenuAt(path, row.dataset.dir === 'true', event.clientX, event.clientY);
+    };
+    el.addEventListener('contextmenu', onContext);
+    return () => el.removeEventListener('contextmenu', onContext);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 行右键锚点（边界防溢出：菜单估计 170×120）
+  const openRowMenuAt = (path: string, isDir: boolean, clientX: number, clientY: number): void => {
+    setRowMenu({
+      path,
+      x: Math.min(clientX, window.innerWidth - 170),
+      y: Math.min(clientY, window.innerHeight - 120),
+      isDir,
+    });
+  };
+
+  // 菜单项点击：失败保留菜单红字错误；成功保留菜单灰字显示实际执行命令（用户可见，无需控制台）
+  const runSystemOpen = (path: string, action: SystemOpenAction): void => {
+    void systemOpen(path, action).then((result) => {
+      setRowMenu((prev) => {
+        if (prev === null) return prev;
+        if (result.ok) {
+          return { ...prev, feedback: `已执行：${result.command ?? action}`, error: undefined };
+        }
+        return { ...prev, error: result.error ?? '系统打开失败', feedback: undefined };
+      });
+    });
+  };
+
   return (
     <>
       {/* 头部：路径输入 + 加载 + 关闭 */}
@@ -456,8 +533,12 @@ export function WorkbenchTree(props: WorkbenchHooks): React.JSX.Element {
                 role="button"
                 tabIndex={0}
                 className="dskDevRow"
-                data-active={joinPath(currentPath, entry.name) === fileState.activePath || undefined}
+                data-active={
+                  normalizeActivePath(joinPath(currentPath, entry.name)) === normalizeActivePath(fileState.activePath) || undefined
+                }
                 data-name={entry.name}
+                data-path={joinPath(currentPath, entry.name)}
+                data-dir="false"
                 data-flash={entry.name === flashName || undefined}
                 onClick={() => void openFile(joinPath(currentPath, entry.name))}
                 onKeyDown={(e) => {
@@ -483,6 +564,41 @@ export function WorkbenchTree(props: WorkbenchHooks): React.JSX.Element {
           )
         )}
       </div>
+      {/* 树行右键菜单（C12）：portal 到 body 脱离列容器；失败时保留菜单并显示红字错误 */}
+      {rowMenu !== null &&
+        createPortal(
+          <div className="dskDevCtxMenu" style={{ left: rowMenu.x, top: rowMenu.y }}>
+            <button
+              type="button"
+              onClick={() => runSystemOpen(rowMenu.path, 'reveal')}
+            >
+              在资源管理器打开
+            </button>
+            {!rowMenu.isDir && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => runSystemOpen(rowMenu.path, 'open')}
+                >
+                  系统默认应用打开
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runSystemOpen(rowMenu.path, 'choose-app')}
+                >
+                  打开方式
+                </button>
+              </>
+            )}
+            {rowMenu.error !== undefined && (
+              <div className="dskDevCtxMenuError">{rowMenu.error}</div>
+            )}
+            {rowMenu.feedback !== undefined && (
+              <div className="dskDevCtxMenuFeedback">{rowMenu.feedback}</div>
+            )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

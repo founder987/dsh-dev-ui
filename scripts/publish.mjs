@@ -63,8 +63,8 @@ function run(args, opts = {}) {
     ...(win ? { shell: true } : {}),
     ...opts,
   })
-  if (res.error) throw res.error
-  if (res.status !== 0) process.exit(res.status ?? 1)
+  if (res.error) throw Object.assign(new Error(`无法执行 ${npmCommand(args)}: ${res.error.message}`), { exitCode: 1 })
+  if (res.status !== 0) throw Object.assign(new Error(`命令失败: ${npmCommand(args)}（退出码 ${res.status}）`), { exitCode: res.status ?? 1 })
 }
 
 function runCapture(args) {
@@ -255,12 +255,20 @@ function verifyInstallable(manifest, expected) {
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(20000),
-    headers: { accept: 'application/json', 'user-agent': 'dsh-develop-ui-publish' },
-  })
-  const body = res.status === 200 ? await res.json() : undefined
-  return { ok: res.ok, status: res.status, body }
+  // 手动 AbortController + clearTimeout：避免 AbortSignal.timeout 的定时器在进程退出时
+  // 仍挂起，触发 Windows 下 libuv 的 UV_HANDLE_CLOSING 断言崩溃（uv async handle race）。
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20000)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { accept: 'application/json', 'user-agent': 'dsh-develop-ui-publish' },
+    })
+    const body = res.status === 200 ? await res.json() : undefined
+    return { ok: res.ok, status: res.status, body }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // ---------------------------------------------------------------- 预检
@@ -299,6 +307,7 @@ const noPublish = flags.has('--no-publish')
 const skipBuild = flags.has('--skip-build')
 const target = positional ?? 'patch'
 
+async function main() {
 console.log('============================================================')
 console.log(' dsh-develop-ui 一键发布')
 console.log(` 目标版本: ${target}   模式: ${dryRun ? 'DRY-RUN(只预检)' : noPublish ? '构建+升版+市场同步(不发布)' : '完整发布'}`)
@@ -314,21 +323,21 @@ let nextVersion
 if (STABLE_SEMVER_PATTERN.test(target)) {
   if (target === pkg.version) {
     fail(`目标版本 ${target} 与当前版本相同，请先升版`)
-    process.exit(1)
+    return
   }
   nextVersion = target
 } else if (['patch', 'minor', 'major'].includes(target)) {
   nextVersion = bumpVersion(pkg.version, target)
 } else {
   fail(`非法目标: ${target}（应为 patch|minor|major 或 X.Y.Z）`)
-  process.exit(1)
+  return
 }
 ok(`目标版本: ${nextVersion}`)
 
 if (errors.length > 0) {
   for (const e of errors) fail(`预检失败: ${e}`)
   console.log('请修复后重试。若为误报，可检查 dsh-community-market 的安装复核规则。')
-  process.exit(1)
+  return
 } else {
   ok('本地清单预检通过（与市场安装复核一致）')
 }
@@ -355,7 +364,7 @@ if (dryRun || noPublish) {
     console.log('请先登录官方 npm（你的默认 registry 可能是镜像，务必带 --registry）:')
     console.log(`  npm.cmd login --registry ${publishRegistry}`)
     console.log(`  （或: npm.cmd adduser --registry ${publishRegistry}）`)
-    process.exit(1)
+    return
   }
   ok(`npm 身份: ${who.stdout.trim()}`)
 }
@@ -365,7 +374,7 @@ try {
   const remote = await fetchJson(`${NPM_REGISTRY}/${encodeURIComponent(pkg.name)}/${encodeURIComponent(nextVersion)}`)
   if (remote.status === 200) {
     fail(`npm 上已存在 ${pkg.name}@${nextVersion}，请选择更高版本`)
-    if (!dryRun) process.exit(1)
+    if (!dryRun) return
   } else if (remote.ok || remote.status === 404) {
     ok(`${pkg.name}@${nextVersion} 尚未发布`)
   } else {
@@ -420,7 +429,7 @@ if (dryRun) {
   console.log(`  4. npm publish（${noPublish ? '跳过' : '执行'}）`)
   console.log('  5. 对 registry.npmjs.org 上的发布产物执行市场安装复核')
   console.log('------------------------------------------------------------')
-  process.exit(process.exitCode ?? 0)
+  return
 }
 
 // 4. 构建 + 类型检查
@@ -495,4 +504,13 @@ console.log('     把 market/1024store/founder987--dsh-dev-ui.json 复制到 cat
 console.log('  4. 验证收录: curl "https://deepseek1024.com/api/v1/plugins?q=dsh-dev-ui"')
 console.log('     桌面端: 插件市场 -> 来源 -> 选 DSH 1024Store（或你的标准来源）-> 刷新 -> 搜索 dsh-dev-ui -> 安装')
 console.log('------------------------------------------------------------')
-process.exit(process.exitCode ?? 0)
+}
+
+main().then(
+  () => {},
+  (err) => {
+    if (err && err.stack) console.error(err.stack)
+    else console.error(err)
+    process.exitCode = err && typeof err.exitCode === 'number' ? err.exitCode : 1
+  },
+)
